@@ -24,8 +24,9 @@ env/
 *.swp
 *.swo
 
-# Runtime data: contains private conversations and user memories
+# Runtime data: contains private conversations, memories, and custom roles
 data/memory.json
+data/custom_roles.json
 data/*.tmp
 data/*.backup.json
 
