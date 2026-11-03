@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Streamlit secrets
+.streamlit/secrets.toml
+
+# Local environment
+.env
+.env.*
+!.env.example
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Runtime data: contains private conversations and user memories
+data/memory.json
+data/*.tmp
+data/*.backup.json
+
+# OS / logs
+.DS_Store
+Thumbs.db
+*.log
