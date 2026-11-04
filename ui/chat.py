@@ -34,6 +34,16 @@ _CSS = """
 .emo-bubble-assistant { background: #FFFFFF; border: 1px solid #E2E8F0; border-top-left-radius: 4px; }
 .emo-bubble-user { background: #DCFCE7; border: 1px solid #BBF7D0; border-top-right-radius: 4px; }
 .emo-meta { font-size: 11px; color: #64748B; line-height: 1.5; }
+.emo-read { font-size: 11px; color: #94A3B8; }
+.emo-typing { display: inline-flex; align-items: center; gap: 5px; padding: 14px 16px; }
+.emo-typing span { width: 7px; height: 7px; border-radius: 50%; background: #94A3B8;
+  display: inline-block; animation: emo-blink 1.2s infinite ease-in-out; }
+.emo-typing span:nth-child(2) { animation-delay: .18s; }
+.emo-typing span:nth-child(3) { animation-delay: .36s; }
+@keyframes emo-blink {
+  0%, 60%, 100% { opacity: .28; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-3px); }
+}
 </style>
 """
 
@@ -61,7 +71,7 @@ def meta_line(message: dict[str, Any]) -> str:
     if emotion:
         parts.append(f"{cfg.EMOTION_EMOJI.get(emotion, '')} 你当时的情绪：{emotion}")
     if message.get("initiative"):
-        parts.append(f"↪ TA 追问：{message['initiative']}")
+        parts.append(f"↪ TA 补一句：{message['initiative']}")
     if message.get("loop_hint"):
         parts.append(f"📌 记下待办：{message['loop_hint']}")
     if message.get("memory_update"):
@@ -69,7 +79,8 @@ def meta_line(message: dict[str, Any]) -> str:
     return " · ".join(parts)
 
 
-def row_html(message: dict[str, Any], *, role_name: str, role_avatar: str, user_avatar: str) -> str:
+def row_html(message: dict[str, Any], *, role_name: str, role_avatar: str, user_avatar: str,
+             read: bool = False) -> str:
     """一条消息 → 一段 HTML（用户靠右、助手靠左）。"""
     is_user = message.get("role") == "user"
     avatar = user_avatar if is_user else role_avatar
@@ -86,6 +97,8 @@ def row_html(message: dict[str, Any], *, role_name: str, role_avatar: str, user_
     header = name if not stamp else f"{name} · {stamp}"
     pieces.append(f'<div class="emo-name">{_escape(header)}</div>')
     pieces.append(f'<div class="emo-bubble {side}">{_escape(message.get("content", ""))}</div>')
+    if is_user and read:
+        pieces.append('<div class="emo-read">已读</div>')
     if meta:
         pieces.append(f'<div class="emo-meta">{_escape(meta)}</div>')
     pieces.append("</div>")
@@ -93,6 +106,29 @@ def row_html(message: dict[str, Any], *, role_name: str, role_avatar: str, user_
         pieces.append(avatars.html_avatar(avatar))
     pieces.append("</div>")
     return "".join(pieces)
+
+
+def typing_html(*, role_name: str, role_avatar: str) -> str:
+    """「对方正在输入…」的气泡：三颗闪烁的点，让等待看起来像真人在打字。"""
+    return "".join([
+        '<div class="emo-row">',
+        avatars.html_avatar(role_avatar),
+        '<div class="emo-body">',
+        f'<div class="emo-name">{_escape(role_name)}</div>',
+        '<div class="emo-bubble emo-bubble-assistant emo-typing">'
+        "<span></span><span></span><span></span></div>",
+        '<div class="emo-read">正在输入…</div>',
+        "</div></div>",
+    ])
+
+
+def render_typing(*, role_name: str, role_avatar: str) -> None:
+    """把打字态画在当前对话下面（写盘/等模型之前调用，用户立刻能看到反馈）。"""
+    st.markdown(_CSS, unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="emo-thread">{typing_html(role_name=role_name, role_avatar=role_avatar)}</div>',
+        unsafe_allow_html=True,
+    )
 
 
 def render_thread(
@@ -104,10 +140,23 @@ def render_thread(
 ) -> None:
     """整段对话一次画完（一次性 markdown，避免 Streamlit 在气泡之间插空行）。"""
     st.markdown(_CSS, unsafe_allow_html=True)
-    rows = [
-        row_html(message, role_name=role_name, role_avatar=role_avatar, user_avatar=user_avatar)
-        for message in messages
-    ]
+    rows: list[str] = []
+    ordered = list(messages)
+    for index, message in enumerate(ordered):
+        is_user = message.get("role") == "user"
+        later_reply = any(
+            other.get("role") == "assistant" and str(other.get("content") or "").strip()
+            for other in ordered[index + 1:]
+        )
+        rows.append(
+            row_html(
+                message,
+                role_name=role_name,
+                role_avatar=role_avatar,
+                user_avatar=user_avatar,
+                read=bool(is_user and later_reply),
+            )
+        )
     if not rows:
         st.caption("还没有开始聊。说一句试试？")
         return

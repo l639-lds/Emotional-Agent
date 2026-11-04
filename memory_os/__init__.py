@@ -10,7 +10,14 @@ from __future__ import annotations
 from core.config import MemoryConfig
 from memory_os.consolidate import run_consolidation
 from memory_os.decay import decay_curve, decay_pass, strength
-from memory_os.engine import DEFAULT_OPENER, MemoryEngine, fact_snapshot_item, normalize_emotion
+from memory_os.engine import (
+    DEFAULT_OPENER,
+    PROACTIVE_STYLES,
+    STYLE_LABELS,
+    MemoryEngine,
+    fact_snapshot_item,
+    normalize_emotion,
+)
 from memory_os.layers import archive_stats, search_archive
 from memory_os.retrieval import format_time_label, render_block
 from memory_os.schema import (
@@ -39,6 +46,8 @@ __all__ = [
     "CATEGORIES",
     "ConsolidationResult",
     "DEFAULT_OPENER",
+    "PROACTIVE_STYLES",
+    "STYLE_LABELS",
     "Episode",
     "Fact",
     "MemoryBundle",

@@ -12,6 +12,7 @@ from typing import Any, Callable
 
 from core.config import (
     ALLOWED_EMOTIONS,
+    CANONICAL_STAGES,
     EMOTION_ALIASES,
     EMOTION_INTENSITY,
     FACT_SHARED_CATEGORIES,
@@ -47,6 +48,111 @@ from memory_os.store import MemoryStore
 # 通用开场白（没有任何未闭环事件时的兜底）
 DEFAULT_OPENER = "今天过得怎么样？有什么想聊聊的吗？"
 
+# 主动开口的"句型"：真人不会每次都用疑问句。有时只是提一句（陈述），有时关心/提醒，
+# 有时说说自己的感受，有时干脆不提问、就在旁边坐着。全部问句会显得像客服回访。
+PROACTIVE_STYLES: tuple[str, ...] = ("ask", "recall", "care", "self", "tease", "presence")
+STYLE_LABELS: dict[str, str] = {
+    "ask": "问一句",
+    "recall": "提起旧事",
+    "care": "关心一句",
+    "self": "说说自己",
+    "tease": "打趣",
+    "presence": "就在旁边",
+}
+# 关系越近，能用的句型越多：刚认识就打趣、或讲自己的感受，会显得越界。
+_STYLE_MIN_STAGE: dict[str, int] = {
+    "ask": 0,
+    "care": 0,
+    "presence": 0,
+    "recall": 1,
+    "tease": 2,
+    "self": 2,
+}
+
+_ASK_LINES = {
+    "loop": "上次你提到{text}，后来怎么样了？",
+    "episode": "上次聊到{text}，后来有变化吗？",
+    "recent": "你刚说的「{text}」，现在怎么样了？",
+    "fact": "你说过{text}——最近还顺吗？",
+}
+_RECALL_LINES = {
+    "loop": "我还记着你说过{text}。不急，想说的时候再说。",
+    "episode": "上次聊到{text}那天，你说话很慢，我记着呢。",
+    "recent": "你刚说的「{text}」，我记住了。",
+    "fact": "我记得你说过{text}。",
+}
+_CARE_LINES = {
+    "loop": "{text}那件事，别一个人扛着。",
+    "episode": "上次聊完{text}，那天你睡得好吗？",
+    "recent": "「{text}」——先顾好你自己，别硬撑。",
+    "fact": "你说过{text}，记得按时吃饭。",
+}
+_TEASE_LINES = {
+    "loop": "{text}？我还没忘呢。先说好，今天不许硬撑。",
+    "episode": "又聊到{text}了。你这人，记性比我还好。",
+    "recent": "「{text}」——又来。行，我陪你。",
+    "fact": "{text}？这习惯我算是摸清了。",
+}
+_STYLE_LINES: dict[str, dict[str, str]] = {
+    "ask": _ASK_LINES,
+    "recall": _RECALL_LINES,
+    "care": _CARE_LINES,
+    "tease": _TEASE_LINES,
+}
+_PRESENCE_LINES = (
+    "我在。想说话就说，不想说就坐着。",
+    "不用急着说什么，我在旁边。",
+)
+_SELF_LINES = (
+    "说个我自己的事——{note}",
+    "我最近才想明白：{note}",
+)
+
+
+def _opener_template(style: str, hook: dict[str, str] | None, *, self_note: str = "") -> str:
+    """按「句型 + 素材」拼一句话（LLM 不可用时的兜底，也是判断语气是否走偏的参照）。"""
+    text = str((hook or {}).get("text") or "").strip()
+    kind = str((hook or {}).get("kind") or "")
+    if style == "presence":
+        return _PRESENCE_LINES[0]
+    if style == "self":
+        if not self_note:
+            return ""
+        return _SELF_LINES[0].format(note=self_note.rstrip("。！？.!?"))
+    if not text:
+        return ""
+    table = _STYLE_LINES.get(style) or {}
+    line = table.get(kind) or table.get("fact") or ""
+    return line.format(text=text)
+
+
+def _fits_style(text: str, style: str) -> bool:
+    """粗略校验 LLM 写的这句话配不配得上要的句型（问句/陈述句不能错位）。"""
+    body = (text or "").strip()
+    if not body:
+        return False
+    is_question = body.endswith(("？", "?")) or "？" in body[-3:]
+    if style == "ask":
+        return is_question
+    return not is_question
+
+
+def _style_reason(style: str, hook: dict[str, str] | None) -> str:
+    """给 UI 的一句注解：这句话为什么这么开口。"""
+    kind = str((hook or {}).get("kind") or "")
+    source = {
+        "loop": "未闭环事件",
+        "episode": "最近聊过的话题",
+        "fact": "长期事实",
+        "recent": "刚才那句话",
+    }.get(kind, "")
+    if style == "presence":
+        return "没有具体素材时，不硬找话题"
+    if style == "self":
+        return "用 L4 自我认知说一句关于自己的话"
+    return f"{STYLE_LABELS.get(style, style)}（素材：{source or '无'}）"
+
+
 # 「你刚说的「你好呀，我叫小林」」这种开场白很怪：先把纯寒暄/自我介绍的口头语剥掉，
 # 剩下的如果还不够长（<6 字），就宁可不用这条素材。
 _SMALLTALK_PREFIXES = (
@@ -73,6 +179,26 @@ def _strip_smalltalk(text: str) -> str:
             clean = clean[: -len(suffix)]
             break
     return clean.strip()
+
+
+def _second_person(text: str) -> str:
+    """长期事实是第三人称存的（「用户在下周三有面试」）；拿来当开场白要换成「你」。"""
+    clean = str(text or "").strip()
+    for old, new in (("用户", "你"), ("ta的", "你的"), ("TA的", "你的"), ("ta", "你"), ("TA", "你")):
+        clean = clean.replace(old, new)
+    return clean.strip()
+
+
+def _short_clause(text: str, limit: int = 12) -> str:
+    """只取第一个分句，并截到 ``limit`` 字——引号里塞一整句话会很吵。"""
+    clean = str(text or "").strip()
+    for mark in ("，", "。", "！", "？", "；", "、", ",", ".", "!", "?", ";"):
+        head, sep, _ = clean.partition(mark)
+        if sep and head.strip():
+            clean = head.strip()
+            break
+    clean = clean.strip("「」“”\"' ")
+    return clean[:limit]
 
 
 def normalize_emotion(raw: Any) -> str:
@@ -451,6 +577,7 @@ class MemoryEngine:
             if str(getattr(fact, "category", "")) not in fact_categories:
                 continue
             text = str(getattr(fact, "content", "") or "").strip()
+            text = _short_clause(_second_person(text), 16)
             if text:
                 hooks.append({"kind": "fact", "text": text,
                               "detail": str(getattr(fact, "category", ""))})
@@ -464,60 +591,182 @@ class MemoryEngine:
                 text = str(getattr(turn, "content", "") or "").strip()
                 text = text.rstrip("。！？.!?，,、；;")
                 text = _strip_smalltalk(text)
+                text = _short_clause(text, 12)
                 if text and len(text) >= 6:
-                    hooks.append({"kind": "recent", "text": text[:24], "detail": "刚才说的话"})
+                    hooks.append({"kind": "recent", "text": text, "detail": "刚才说的话"})
                 break
         return hooks[: max(1, limit + 3)]
 
+    def _stage_index(self, memory: RoleMemory) -> int:
+        """关系阶段 → 0..3；认不出来的阶段按「陌生」处理。"""
+        stage = str(getattr(memory.relationship, "stage", "") or "")
+        try:
+            return CANONICAL_STAGES.index(stage)
+        except ValueError:
+            return 0
+
+    def _latest_self_note(self, memory: RoleMemory) -> str:
+        """L4 里最新的一条自我叙述（让 TA 也能说一句"关于自己"的话）。"""
+        notes = sorted(
+            memory.self_notes,
+            key=lambda note: float(getattr(note, "updated_at", 0) or 0),
+            reverse=True,
+        )
+        for note in notes:
+            text = str(getattr(note, "content", "") or "").strip()
+            if text:
+                return text
+        return ""
+
+    def _available_styles(self, memory: RoleMemory) -> list[str]:
+        """按关系阶段筛句型：刚认识不打趣、也不讲自己的感受。"""
+        level = self._stage_index(memory)
+        styles = [style for style in PROACTIVE_STYLES if _STYLE_MIN_STAGE.get(style, 0) <= level]
+        if not self._latest_self_note(memory):
+            styles = [style for style in styles if style != "self"]
+        return styles
+
+    def _last_style(self, role: str) -> str:
+        meta = self.data.get("meta")
+        styles = meta.get("proactive_last_style") if isinstance(meta, dict) else None
+        return str(styles.get(role) or "") if isinstance(styles, dict) else ""
+
+    def _remember_style(self, role: str, style: str) -> None:
+        """记住这次用了哪种句型：下一轮换一种，别每次都同一个开头。"""
+        if not style:
+            return
+        meta = self.data.get("meta")
+        if not isinstance(meta, dict):
+            meta = {}
+            self.data["meta"] = meta
+        styles = meta.get("proactive_last_style")
+        if not isinstance(styles, dict):
+            styles = {}
+            meta["proactive_last_style"] = styles
+        if styles.get(role) != style:
+            styles[role] = style
+            self.save()
+
+    def proactive_suggestions(self, role: str, *, limit: int = 3,
+                              now: float | None = None,
+                              polish: bool = True,
+                              commit: bool = True) -> list[dict[str, Any]]:
+        """候选「下一句」：每句带句型（问 / 提旧事 / 关心 / 说自己 / 打趣 / 就陪着）。
+
+        同一批里句型不重复，首句避开上一轮用过的句型；素材按「未闭环 → 最近话题 →
+        长期事实 → 刚才那句」挑。所以它既能落在具体的事上，也不会永远在提问。
+
+        Args:
+            polish: 是否让模型把模板润色成 TA 的口吻。界面上"先给你看看"时传 False，
+                省掉一次模型调用；真要用这句话时再传 True。
+            commit: 是否把这次用的句型记进 ``meta``（下一轮据此换一种）。
+                只是渲染候选时传 False，避免"页面每刷新一次就换一句"。
+        """
+        as_ms(now)  # 保留时间注入，当前只用于契约一致
+        memory = self._role_memory(role)
+        hooks = self._proactive_hooks(memory, limit=max(2, limit))
+        styles = self._available_styles(memory)
+        if not styles:
+            return [{
+                "opener": DEFAULT_OPENER,
+                "style": "presence",
+                "label": STYLE_LABELS["presence"],
+                "hook": "",
+                "hook_kind": "",
+                "reason": "还没有可参考的素材",
+            }]
+
+        last = self._last_style(role)
+        if last in styles and len(styles) > 1:
+            pivot = styles.index(last) + 1
+            styles = styles[pivot:] + styles[:pivot]
+
+        note = self._latest_self_note(memory)
+        candidates: list[dict[str, Any]] = []
+        used_hooks: set[str] = set()
+        for style in styles:
+            hook: dict[str, str] | None = None
+            if style in _STYLE_LINES:
+                hook = next((item for item in hooks if item["text"] not in used_hooks), None)
+                if hook is None:
+                    continue
+            template = _opener_template(style, hook, self_note=note)
+            if not template:
+                continue
+            if hook is not None:
+                used_hooks.add(hook["text"])
+            candidates.append({
+                "opener": template,
+                "style": style,
+                "label": STYLE_LABELS[style],
+                "hook": str((hook or {}).get("text") or ""),
+                "hook_kind": str((hook or {}).get("kind") or ""),
+                "reason": _style_reason(style, hook),
+            })
+            if len(candidates) >= max(1, limit):
+                break
+
+        if not candidates:
+            candidates.append({
+                "opener": DEFAULT_OPENER,
+                "style": "presence",
+                "label": STYLE_LABELS["presence"],
+                "hook": "",
+                "hook_kind": "",
+                "reason": "没有可用素材",
+            })
+
+        polished = self._polish_opener(candidates[0], hooks, note, last) if polish else ""
+        if polished:
+            candidates[0]["opener"] = polished
+
+        picked: list[dict[str, Any]] = []
+        for item in candidates:
+            if all(textsim.similarity(item["opener"], kept["opener"]) < 0.8 for kept in picked):
+                picked.append(item)
+        if not picked:
+            picked = candidates[:1]
+        if commit:
+            self._remember_style(role, str(picked[0]["style"]))
+        return picked[: max(1, limit)]
+
+    def _polish_opener(self, candidate: dict[str, Any], hooks: list[dict[str, Any]],
+                       self_note: str = "", last_style: str = "") -> str:
+        """让模型把模板润色成 TA 的口气；语气走偏（该陈述却写成问句）就不用它。"""
+        if not hooks and not self_note:
+            return ""
+        try:
+            payload = call_llm_json(
+                self.llm,
+                prompts.PROACTIVE_SYSTEM,
+                prompts.build_proactive_user_prompt(
+                    hooks,
+                    style=str(candidate.get("style") or ""),
+                    style_hint=str(candidate.get("label") or ""),
+                    last_style=last_style,
+                ),
+                purpose="proactive",
+                demo_context={
+                    "hooks": hooks,
+                    "style": candidate.get("style"),
+                    "self_note": self_note,
+                    "open_loops": [{"what": hook["text"]} for hook in hooks if hook["kind"] == "loop"],
+                },
+                max_tokens=400,
+            )
+        except Exception:  # 主动关怀失败不能影响主流程
+            return ""
+        text = _clip(payload.get("opener"), 80) or ""
+        if not text or not _fits_style(text, str(candidate.get("style") or "")):
+            return ""
+        if textsim.similarity(text, str(candidate.get("opener") or "")) >= 0.95:
+            return ""
+        return text
+
     def proactive_openers(self, role: str, *, limit: int = 3,
                           now: float | None = None) -> list[str]:
-        """生成主动关怀开场白：优先未闭环事件，其次最近话题/长期事实，最后才日常寒暄。
-
-        每条素材只出一句（LLM 措辞或模板二选一），跨条按相似度去重，
-        所以返回的是"不同事情的开口话术"，而不是同一句的几种说法。
-        """
-        as_ms(now)  # 保留时间注入，当前不参与选择，只保证调用契约一致
-        memory = self._role_memory(role)
-        hooks = self._proactive_hooks(memory, limit=max(1, limit))
-        payload: dict[str, Any] = {}
-        if hooks:
-            try:
-                payload = call_llm_json(
-                    self.llm,
-                    prompts.PROACTIVE_SYSTEM,
-                    prompts.build_proactive_user_prompt(hooks),
-                    purpose="proactive",
-                    demo_context={
-                        "hooks": hooks,
-                        "open_loops": [{"what": hook["text"]} for hook in hooks if hook["kind"] == "loop"],
-                    },
-                    max_tokens=400,
-                )
-            except Exception:  # 主动关怀失败不能影响主流程
-                payload = {}
-        llm_opener = _clip(payload.get("opener"), 80)
-        openers: list[str] = []
-        for index, hook in enumerate(hooks):
-            kind = hook["kind"]
-            text = hook["text"]
-            if kind == "loop":
-                template = f"上次你提到{text}，后来怎么样了？"
-            elif kind == "episode":
-                template = f"上次你聊到{text}，后来有变化吗？"
-            elif kind == "recent":
-                template = f"你刚说的「{text}」，我还记着——现在怎么样了？"
-            else:
-                template = f"我还记得你说过{text}，最近还好吗？"
-            opener = template
-            if index == 0 and llm_opener and textsim.similarity(llm_opener, template) < 0.8:
-                opener = llm_opener
-            if all(textsim.similarity(opener, kept) < 0.8 for kept in openers):
-                openers.append(opener)
-            if len(openers) >= limit:
-                break
-        if not openers:
-            openers.append(DEFAULT_OPENER)
-        return openers[: max(1, limit)]
+        """只要文本的旧接口（脚本/测试沿用）：内部走 :meth:`proactive_suggestions`。"""
+        return [item["opener"] for item in self.proactive_suggestions(role, limit=limit, now=now)]
 
     # ------------------------------------------------------------------
     # L0 原文库 / L3 快照 / L4 自我认知
@@ -689,4 +938,11 @@ class MemoryEngine:
         }
 
 
-__all__ = ["DEFAULT_OPENER", "MemoryEngine", "fact_snapshot_item", "normalize_emotion"]
+__all__ = [
+    "DEFAULT_OPENER",
+    "PROACTIVE_STYLES",
+    "STYLE_LABELS",
+    "MemoryEngine",
+    "fact_snapshot_item",
+    "normalize_emotion",
+]

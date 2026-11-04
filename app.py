@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import time
+
 import streamlit as st
 
 from core import config as cfg
@@ -26,6 +28,7 @@ def _reset_turn_state() -> None:
     st.session_state["last_turn"] = None
     st.session_state["retry"] = None
     st.session_state["pending_turn"] = None
+    st.session_state["pending_opener"] = None
 
 
 def _render_memory_maintenance(role_name: str, names: list[str]) -> None:
@@ -317,40 +320,74 @@ if view == VIEW_CHAT:
                 st.session_state["retry"] = {"text": retry["text"], "error": str(exc)}
             st.rerun()
 
-    openers: list[str] = []
-    if state.proactive_enabled():
-        try:
-            openers = engine.proactive_openers(role_name, limit=1)
-        except Exception:
-            openers = []
-    # 主动开口必须落在"具体某件事"上：只剩兜底寒暄就干脆不显示（可在侧边栏关掉这个功能）
-    if openers and openers[0] != FALLBACK_OPENER:
+    # 只在"TA 刚说完、还没轮到你"的时候才提议下一句；你刚发出去就先别插话
+    pending = st.session_state.get("pending_turn")
+    last_role = thread[-1].get("role") if thread else "assistant"
+    card = None
+    if state.proactive_enabled() and not pending and last_role != "user":
+        # 同一段对话只算一次候选：否则页面每 rerun 一次就换一句，还会白烧一次模型调用
+        signature = (role_name, len(thread), thread[-1].get("ts") if thread else 0)
+        cached = st.session_state.get("proactive_card")
+        if not cached or cached.get("signature") != signature:
+            try:
+                items = engine.proactive_suggestions(role_name, limit=1, polish=False, commit=False)
+            except Exception:
+                items = []
+            cached = None
+            if items and items[0].get("opener") != FALLBACK_OPENER:
+                cached = {**items[0], "signature": signature}
+            st.session_state["proactive_card"] = cached
+        card = cached
+    # 主动开口必须落在"具体某件事"上：只剩兜底寒暄就干脆不显示（可在侧边栏关掉）
+    if card:
         with st.container(border=True):
-            st.caption("TA 想先问一句（参考了你们之前聊到的事）：")
-            st.markdown(f"「{openers[0]}」")
+            st.caption(f"TA 想先开口（{card.get('label', '问一句')}）：")
+            st.markdown(f"「{card['opener']}」")
+            if card.get("reason"):
+                st.caption(f"依据：{card['reason']}")
             if st.button("让 TA 主动开口", use_container_width=True):
-                state.append_chat(role_name, "assistant", openers[0], initiative=openers[0])
+                st.session_state["pending_opener"] = {"role": role_name}
                 st.rerun()
 
+    # 点了"让 TA 主动开口"：这一句才值得让模型润色一次，然后先画打字态、再落话
+    pending_opener = st.session_state.pop("pending_opener", None)
+    if pending_opener and pending_opener.get("role") == role_name:
+        try:
+            fresh = engine.proactive_suggestions(role_name, limit=1, polish=True, commit=True)
+        except Exception:
+            fresh = []
+        text = fresh[0]["opener"] if fresh else FALLBACK_OPENER
+        chat.render_typing(role_name=role_name, role_avatar=avatar)
+        time.sleep(cfg.TYPING_MIN_MS / 1000.0)
+        state.append_chat(role_name, "assistant", text, initiative=text)
+        st.session_state["proactive_card"] = None
+        st.rerun()
+
     # 用户那句已经落盘、上一帧已经画出来了；这一帧再让 TA 想，气泡随后单独出现
-    pending = st.session_state.get("pending_turn")
     if pending:
         st.session_state["pending_turn"] = None
         if pending.get("role") != role_name:  # 中途换角色就丢掉，别串台
             st.rerun()
-        with st.spinner(f"{role_name} 正在回忆……"):
-            try:
-                st.session_state["last_turn"] = state.finish_turn(
-                    role_name, pending["text"], est_emotion=pending.get("est_emotion")
-                )
-            except llm.LLMError as exc:
-                st.session_state["retry"] = {"text": pending["text"], "error": str(exc)}
-            else:
-                for note in st.session_state["last_turn"].get("notes") or []:
-                    state.flash(note)
+        started = time.monotonic()
+        chat.render_typing(role_name=role_name, role_avatar=avatar)  # 先把"正在输入"画上去
+        try:
+            st.session_state["last_turn"] = state.finish_turn(
+                role_name, pending["text"], est_emotion=pending.get("est_emotion")
+            )
+        except llm.LLMError as exc:
+            st.session_state["retry"] = {"text": pending["text"], "error": str(exc)}
+        else:
+            for note in st.session_state["last_turn"].get("notes") or []:
+                state.flash(note)
+        waiting_ms = (time.monotonic() - started) * 1000.0
+        if waiting_ms < cfg.TYPING_MIN_MS:
+            time.sleep((cfg.TYPING_MIN_MS - waiting_ms) / 1000.0)
         st.rerun()
 
-    prompt = st.chat_input(f"和{role_name}说点什么…")
+    prompt = st.chat_input(
+        f"和{role_name}说点什么…" if not pending else f"{role_name}正在回你…",
+        disabled=bool(pending),
+    )
     if prompt:
         st.session_state["retry"] = None
         # ① 先只写用户这一句：rerun 之后气泡立刻出现，不用等模型

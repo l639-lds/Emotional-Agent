@@ -110,26 +110,40 @@ def build_consolidate_user_prompt(turns: list[dict[str, Any]],
     return "\n\n".join(sections)
 
 
-PROACTIVE_SYSTEM = """你是情感陪伴 Agent 的「主动关怀器」。用户刚打开对话还没说话，
-请基于「TA 最近真实经历过的事」先问一句，让 TA 感到"你还记得"。
+PROACTIVE_SYSTEM = """你是情感陪伴 Agent 的「下一句」拟稿器。对话还没开始，你要替 TA 说出第一句。
 
-可选素材（按优先级）：
-1. 未闭环事件：上次聊到一半、有个结果没说的事；
-2. 最近聊过的话题：前面几轮聊到的具体事情；
-3. 长期事实里的近况/目标/喜好：TA 自己说过的状态。
+真人不会每次都问一句。这次会指定一个句型，请严格按它写：
+- 问一句（ask）：落到对方那件事上的具体追问；
+- 提起旧事（recall）：只陈述你记得的那件事，不提问，把话头轻轻放下；
+- 关心一句（care）：像熟人那样心疼/提醒，具体到吃饭、睡觉、别硬撑这类小事；
+- 说说自己（self）：用「我」开头，讲你自己的一点感受或变化；
+- 打趣（tease）：带一点点玩笑或嫌弃，但底下是关心，绝不刻薄；
+- 就在旁边（presence）：不提问也不劝，只说你在，留白。
 
-要求：
-1. 只输出 JSON：{"opener": "一句中文开场白", "hook": "你用的是哪条素材", "reason": "为什么挑它"};
-2. **必须落到具体的事上**（提到那件事或那个话题），禁止只写「今天过得怎么样」「最近好吗」这种放之四海皆准的寒暄；
-3. 不要提「记忆」「系统」「记录」这类词，不说教，不要凑感叹号；
-4. 一句话，20-40 字，先关心结果再关心情绪；
-5. 有时间线索（如「下周三」）就自然带进来；素材里有负面情绪时语气放轻，不要追问细节。
+硬要求：
+1. 只输出 JSON：{"opener": "一句话", "style": "给你的句型 key", "hook": "用的是哪条素材", "reason": "为什么这么说"}；
+2. **必须落到具体的事上**（提到那件事或那个话题），禁止「今天过得怎么样」「最近好吗」这类放之四海皆准的寒暄；
+3. 18-45 字，一句；不要堆感叹号，不说教，不提「记忆」「系统」「记录」这类词；
+4. 句型是 ask 时必须用问号结尾；**其它句型不要用问号结尾**——不要偷偷把陈述写成提问；
+5. 允许说得不完整（例如「我记着你那件事。」），真人说话本来就断断续续。
 不要输出任何其它字符。"""
 
 
-def build_proactive_user_prompt(hooks: list[dict[str, Any]]) -> str:
-    """拼装主动关怀调用的用户消息（hooks 里带 kind，便于模型分清素材类型）。"""
-    kind_labels = {"loop": "未闭环事件", "episode": "最近聊过的话题", "fact": "长期事实"}
+def build_proactive_user_prompt(hooks: list[dict[str, Any]], *,
+                               style: str = "ask",
+                               style_hint: str = "",
+                               last_style: str = "") -> str:
+    """拼装主动关怀调用的用户消息（hooks 带 kind，这次还要指定句型）。
+
+    ``style`` 决定这次是问、是陈述、是关心还是打趣——这是"别每次都问一句"的落点；
+    ``last_style`` 是上一轮用过的句型，提醒模型别连着用同一个开头。
+    """
+    kind_labels = {
+        "loop": "未闭环事件",
+        "episode": "最近聊过的话题",
+        "fact": "长期事实",
+        "recent": "刚才那句话",
+    }
     lines = []
     for item in hooks[:8]:
         kind = kind_labels.get(str(item.get("kind", "")), "素材")
@@ -139,7 +153,10 @@ def build_proactive_user_prompt(hooks: list[dict[str, Any]]) -> str:
             continue
         lines.append(f"- [{kind}] {text}" + (f"｜补充：{detail}" if detail else ""))
     body = "\n".join(lines) if lines else "（用户最近没有可参考的事，只能用一句轻的日常问候）"
-    return f"## 可参考的素材\n{body}\n\n## 输出\n只输出符合要求的 JSON 对象。"
+    head = f"## 这次的句型\n{style_hint or style}（key: {style or 'ask'}）"
+    if last_style and last_style != style:
+        head += f"\n上一轮已经用过「{last_style}」，这次不要再用那种开头。"
+    return f"{head}\n\n## 可参考的素材\n{body}\n\n## 输出\n只输出符合要求的 JSON 对象。"
 
 
 # ---------------------------------------------------------------------------

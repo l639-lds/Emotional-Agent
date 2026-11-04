@@ -555,3 +555,33 @@ build_memory_block(bundle, *, include_self=False) -> str
 - `forced_demo()` 只表示"服务端开了强制演示"；它**不能**压过访客自己的 Key，否则侧边栏会同时出现「已使用你的 Key」与「离线演示模式」。
 - 占位符 Key（含 `xxxx` / 不以 `sk-` 开头 / 太短）按"没填"处理（`key_looks_placeholder()`），并提示具体原因。
 - `ui/state.py::api_key_hint()` / `demo_hint()` 是这两句文案的唯一来源，别在 `app.py` 里另写一套。
+
+## 12. 主动开口的六种句型 + 打字态（v4.3 新增）
+
+### 12.1 句型表（`memory_os/engine.py`）
+
+| style | 中文 | 解锁阶段（`_STYLE_MIN_STAGE`） | 是否问句 |
+|---|---|---|---|
+| `ask` | 问一句 | 陌生(0) | ✅ 必须带 `？` |
+| `care` | 关心一句 | 陌生(0) | ❌ |
+| `presence` | 就在旁边 | 陌生(0) | ❌ |
+| `recall` | 提起旧事 | 熟悉(1) | ❌ |
+| `tease` | 打趣 | 亲近(2) | ❌ |
+| `self` | 说说自己 | 亲近(2) 且有 L4 自我认知 | ❌ |
+
+- `proactive_suggestions(role, *, limit=3, now=None, polish=True, commit=True)` 返回
+  `[{opener, style, label, hook, hook_kind, reason}]`；同一批句型不重复。
+- `commit=False` 时**不写** `data.meta.proactive_last_style`（界面只是"先给你看看"，
+  不能每刷一次就换一句）。
+- `polish=False` 时不调模型（候选就是模板）；真正落到对话里才 `polish=True` 润色一次。
+- `_fits_style()` 是硬约束：`ask` 不带问号、或其它句型偷写成问句，一律回落到模板。
+- `proactive_openers()` 是只要文本的旧接口（`polish=True, commit=True`），脚本/测试沿用。
+
+### 12.2 打字态与已读（`ui/chat.py` + `app.py`）
+
+- `typing_html(role_name, role_avatar)` / `render_typing(...)`：三颗闪烁点 + 小字「正在输入…」。
+- `row_html(..., read=True)` 才在用户气泡下渲染「已读」；`render_thread` 按"后面还有 assistant 内容"判定。
+- 顺序（不可颠倒）：用户气泡（`begin_turn`）→ 打字态 → `finish_turn` → `rerun`。
+- `cfg.TYPING_MIN_MS = 900`：即使模型 900ms 内返回，打字态也至少停留这么久；打字期间
+  `st.chat_input(disabled=True)`，避免连发丢消息。
+- 单测里把 `cfg.TYPING_MIN_MS` patch 成 0（`tests/test_app.py` 的 fixture 已这么做）。

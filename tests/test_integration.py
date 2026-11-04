@@ -12,6 +12,7 @@ import pytest
 
 from core import config as cfg
 from core import demo, llm
+import memory_os
 from memory_os import MemoryEngine, MemoryStore
 from persona_forge import card_to_dict, compile_persona, dict_to_card
 from persona_forge.legacy import from_legacy
@@ -172,6 +173,32 @@ def test_proactive_opener_does_not_parrot_a_greeting(engine):
     assert openers, "至少要给一句兜底开场白"
     joined = "".join(openers)
     assert "你好呀" not in joined, f"寒暄不该被当成话题：{joined}"
+
+
+def test_proactive_suggestions_mix_question_and_statement(engine):
+    """「下一句」不能只有疑问句：同一批里既要有追问，也要有陈述/关心类说法。"""
+    _feed(engine)
+    items = engine.proactive_suggestions(ROLE, limit=3)
+    assert items
+    for item in items:
+        assert set(item) >= {"opener", "style", "label", "hook", "hook_kind", "reason"}
+        assert item["style"] in memory_os.PROACTIVE_STYLES
+        assert item["label"] == memory_os.STYLE_LABELS[item["style"]]
+    asks = [item for item in items if item["opener"].rstrip().endswith(("？", "?"))]
+    statements = [item for item in items if item not in asks]
+    assert asks, f"应该保留一句追问：{items}"
+    assert statements, f"还应该有不是问句的说法：{items}"
+    assert len({item["style"] for item in items}) == len(items), "同一批里句型不要重复"
+
+
+def test_proactive_style_rotates_between_turns(engine):
+    """上一轮用过的句型，这一轮不再打头——真人不会每次都同一个开场。"""
+    _feed(engine)
+    first = engine.proactive_suggestions(ROLE, limit=1)[0]
+    second = engine.proactive_suggestions(ROLE, limit=1)[0]
+    assert first["style"] != second["style"], f"连着两轮同一种句型：{first} / {second}"
+    remembered = (engine.data.get("meta") or {}).get("proactive_last_style") or {}
+    assert remembered.get(ROLE) == second["style"], "用过的句型要记进 meta，下一轮才能避开"
 
 
 def test_auto_consolidate_switch_off(engine, monkeypatch):

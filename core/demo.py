@@ -645,28 +645,53 @@ def fake_json(
 
     if purpose == "proactive":
         hooks = context.get("hooks") or []
-        if hooks:
-            first = hooks[0] or {}
-            kind = str(first.get("kind") or "loop")
-            text = str(first.get("text") or "那件事")
-            openers = {
-                "loop": f"上次你说{text}，后来怎么样了？我这儿一直记着。",
-                "episode": f"上次你聊到{text}，我没好意思多问，现在有变化吗？",
-                "recent": f"你刚提到{text}，我还在想这事——现在怎么样了？",
-                "fact": f"我还记得你说过{text}，最近还顺吗？",
-            }
-            return {
-                "opener": openers.get(kind, f"上次你说{text}，后来怎么样了？"),
-                "hook": text,
-                "reason": f"{kind} 回访",
-            }
-        loops = context.get("open_loops") or []
-        if loops:
-            return {
-                "opener": f"上次你说{loops[0].get('what', '那件事')}，后来怎么样了？",
-                "reason": "未闭环事件回访",
-            }
-        return {"opener": "今天过得怎么样？", "reason": "没有可参考的素材，使用日常开场"}
+        style = str(context.get("style") or "ask")
+        self_note = str(context.get("self_note") or "").strip()
+        first = hooks[0] if hooks else {}
+        kind = str(first.get("kind") or "loop")
+        text = str(first.get("text") or "那件事")
+        questions = {
+            "loop": f"上次你说{text}，后来怎么样了？我这儿一直记着。",
+            "episode": f"上次你聊到{text}，我没好意思多问，现在有变化吗？",
+            "recent": f"你刚提到{text}，我还在想这事——现在怎么样了？",
+            "fact": f"我还记得你说过{text}，最近还顺吗？",
+        }
+        statements = {
+            "recall": {
+                "loop": f"我还记着你说{text}。不急，你想说的时候再说。",
+                "episode": f"上次聊到{text}，我记得你说话很慢。",
+                "recent": f"你刚说的「{text}」，我记住了。",
+                "fact": f"我记得你说过{text}。",
+            },
+            "care": {
+                "loop": f"{text}那件事，别一个人扛着。",
+                "episode": f"上次聊完{text}，那天你睡得好吗？",
+                "recent": f"「{text}」——先顾好你自己，别硬撑。",
+                "fact": f"你说过{text}，记得按时吃饭。",
+            },
+            "tease": {
+                "loop": f"{text}？我还没忘呢。先说好，今天不许硬撑。",
+                "episode": f"又聊到{text}了。你这人，记性比我还好。",
+                "recent": f"「{text}」——又来。行，我陪你。",
+                "fact": f"{text}？这习惯我算是摸清了。",
+            },
+        }
+        if style == "presence" or (not hooks and not self_note):
+            opener = "我在。想说话就说，不想说就坐着。"
+        elif style == "self":
+            trimmed = self_note.rstrip("。！？.!?")
+            opener = f"说个我自己的事——{trimmed}" if trimmed else "我最近才想明白：陪你坐着，比讲道理有用。"
+        elif style == "ask":
+            opener = questions.get(kind, questions["loop"])
+        else:
+            table = statements.get(style) or statements["recall"]
+            opener = table.get(kind) or table["fact"]
+        return {
+            "opener": opener,
+            "style": style,
+            "hook": text if hooks else "",
+            "reason": f"{style} 句型（{kind} 素材）" if hooks else f"{style} 句型",
+        }
 
     if purpose == "persona_interview":
         return {"question": _interview_question(context.get("stage") or {}, context.get("answers") or {})}

@@ -36,6 +36,7 @@ def app(tmp_path, monkeypatch):
     monkeypatch.setattr(cfg, "ARCHIVE_DIR", tmp_path / "archive", raising=False)
     monkeypatch.setattr(cfg, "AVATAR_DIR", tmp_path / "avatars", raising=False)
     monkeypatch.setattr(cfg, "SETTINGS_FILE", tmp_path / "settings.json", raising=False)
+    monkeypatch.setattr(cfg, "TYPING_MIN_MS", 0, raising=False)  # 打字态不白等，测试才跑得快
     st.cache_resource.clear()
 
     instance = AppTest.from_file("app.py", default_timeout=120)
@@ -121,6 +122,35 @@ def test_chat_history_is_persisted_per_role(app):
     assert rendered.count('class="emo-row') >= 3, "开场白 + 我的提问 + TA 的回复"
     assert "emo-bubble-user" in rendered and "emo-bubble-assistant" in rendered
     assert "加班" in rendered
+
+
+def test_typing_bubble_and_read_receipt_render(app):
+    """「对方正在输入」与「已读」：都是自绘 HTML，先验纯函数再验真实页面。"""
+    from ui import chat
+
+    typing = chat.typing_html(role_name="温柔老父亲", role_avatar="👨")
+    assert "emo-typing" in typing
+    assert typing.count("<span>") == 3, "三颗点"
+    assert "正在输入" in typing
+
+    read_row = chat.row_html(
+        {"role": "user", "content": "我说的那句"},
+        role_name="TA",
+        role_avatar="👨",
+        user_avatar="🙂",
+        read=True,
+    )
+    assert "已读" in read_row
+    unread_row = chat.row_html(
+        {"role": "user", "content": "我刚说的那句"},
+        role_name="TA",
+        role_avatar="👨",
+        user_avatar="🙂",
+    )
+    assert "已读" not in unread_row, "还没人回的时候不该显示已读"
+
+    _say(app, "我最近加班到很晚")
+    assert "已读" in _markdown(app), "TA 回复之后，我的气泡下面应该有已读"
 
 
 def test_correct_fact_supersedes_old_one(app):
