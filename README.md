@@ -388,7 +388,7 @@ Emotional-Agent-main/
 ├── scripts/eval_memory.py    记忆机制离线评测，产出海报指标
 ├── docs/SPEC.md              内部接口契约（含 §8 五层扩展规格）
 ├── docs/答辩稿.md / .docx     3 分钟一页口播稿（数字与 metrics.json 一致）
-├── docs/screenshots/         界面预览图（公开部署时放真实运行截图）
+├── docs/screenshots/         界面预览图（真机截图，1600×1000）
 ├── docs/cover/               项目封面：cover.html / cover.pdf（A4 竖版，套用赛事背景板）
 │   ├── template.jpg          赛事方给的主视觉底图（封面背景）
 │   └── build_cover.py        一键重建封面（Chrome 无头打印，不依赖 Python 包）
