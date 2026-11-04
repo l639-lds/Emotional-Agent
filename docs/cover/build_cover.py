@@ -23,6 +23,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 OUT_PDF = HERE / "cover.pdf"
 OUT_PNG = HERE / "preview.png"
+OUT_JPG = HERE / "cover.jpg"
 HTML = HERE / "cover.html"
 
 BROWSERS = (
@@ -77,6 +78,16 @@ def main() -> int:
     )
     for path in (OUT_PDF, OUT_PNG):
         print(f"{path.name}: {path.stat().st_size} bytes")
+
+    # 顺带压一张体积小的 JPG，README / 报名表可以直传（没有 Pillow 就跳过）
+    try:
+        from PIL import Image
+    except ImportError:
+        print("（没装 Pillow，跳过 cover.jpg）")
+        return 0
+    with Image.open(OUT_PNG) as image:
+        image.convert("RGB").save(OUT_JPG, quality=92, optimize=True, progressive=True)
+    print(f"{OUT_JPG.name}: {OUT_JPG.stat().st_size} bytes")
     return 0
 
 
