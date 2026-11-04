@@ -1,10 +1,12 @@
-﻿"""app.py 的端到端测试：用 streamlit 官方 AppTest 真跑一遍界面脚本（离线演示模式，不联网）。
+"""app.py 的端到端测试：用 streamlit 官方 AppTest 真跑一遍界面脚本（离线演示模式，不联网）。
 
 覆盖：首次启动无异常 → 连聊 4 轮触发记忆固化 → 切到记忆舱/实验室视图能看到五层记忆 →
 原文库检索能回溯到具体那句话 → 记忆可纠正 → 清空当前角色记忆后回到空状态。
 """
 
 from __future__ import annotations
+
+import os
 
 import pytest
 from streamlit.testing.v1 import AppTest
@@ -199,3 +201,44 @@ def test_api_key_problem_flags_placeholder(monkeypatch):
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     assert state.api_key_problem() == ""
     assert llm.is_demo_mode() is True
+
+def test_session_key_overrides_env_and_never_shows_plaintext(monkeypatch):
+    """访客自己填的 Key：只走会话上下文，不写 os.environ，界面上只露末 4 位。"""
+    from core import llm
+
+    monkeypatch.delenv("EMO_DEMO_MODE", raising=False)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-envenvenvenvenvenvenvenvenv0001")
+
+    llm.set_session_api_key("sk-" + "a" * 32 + "9999")
+    try:
+        assert llm.key_source() == "session"
+        assert llm.active_api_key().endswith("9999")
+        assert llm.key_fingerprint() == "sk-…9999"
+        assert "aaaa" not in llm.mode_label()
+        assert llm.is_demo_mode() is False
+        assert os.environ["DEEPSEEK_API_KEY"].endswith("0001"), "会话 Key 不应该覆盖进程环境变量"
+    finally:
+        llm.set_session_api_key("")
+
+    assert llm.key_source() == "env"
+    assert llm.key_fingerprint().endswith("0001")
+
+
+def test_api_key_input_is_masked_and_never_echoed(app, monkeypatch):
+    """侧边栏粘 Key 后：页面只显示指纹，任何组件里都不出现明文。"""
+    secret = "sk-" + "b" * 32 + "4321"
+    monkeypatch.delenv("EMO_DEMO_MODE", raising=False)
+    app.run()
+
+    from ui import state as ui_state
+
+    app.text_input(key=ui_state.key_input_key()).set_value(secret).run()
+    next(button for button in app.button if button.label.strip() == "应用 Key").click().run()
+    assert not app.exception
+
+    rendered = " ".join(item.value for item in app.markdown)
+    rendered += " ".join(item.value for item in app.sidebar.caption)
+    rendered += " ".join(item.value for item in app.sidebar.success)
+    assert secret not in rendered, "明文 Key 绝不能出现在页面上"
+    assert "4321" in rendered, "应该显示末 4 位指纹，方便确认连的是哪把 Key"
+    assert os.getenv("DEEPSEEK_API_KEY", "") != secret

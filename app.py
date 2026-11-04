@@ -27,6 +27,7 @@ st.set_page_config(
 )
 
 state.init_session()
+state.apply_session_key()  # 把本会话自己的 Key 放回上下文（不落盘、不进环境变量）
 
 role_file = state.load_role_file()
 names = state.role_names(role_file)
@@ -67,16 +68,33 @@ with st.sidebar:
         st.error(_key_problem, icon="🔑")
 
     with st.expander("运行模式 / API Key", expanded=llm.is_demo_mode()):
-        st.caption("留空则在离线演示模式下运行：本地假模型会把五层记忆、固化、人设编译全链路跑通。")
+        st.caption(
+            "Key 只存在你自己的浏览器会话里：页面只显示末 4 位指纹，别处看不到明文，"
+            "退出浏览器即失效，也不会写进 data/ 或日志。"
+        )
+        st.caption(state.session_key_label())
         if llm.is_demo_mode():
             st.caption(
-                "想在终端设 Key（PowerShell）：`$env:DEEPSEEK_API_KEY=\"sk-...\"`，"
-                "设好后**重启** streamlit；cmd 才用 `set DEEPSEEK_API_KEY=sk-...`。"
+                "没有 Key 也能跑：离线演示模式会用本地假模型把五层记忆、固化、人设编译全链路跑通。"
+                "想用服务端公共 Key（部署方配置），在终端设 `$env:DEEPSEEK_API_KEY=\"sk-...\"` 后重启（cmd 才用 `set`）。"
             )
-        key_input = st.text_input("DeepSeek API Key", type="password", placeholder="sk-...")
-        if st.button("应用 Key", use_container_width=True):
-            state.set_api_key(key_input)
-            st.rerun()
+        key_input = st.text_input(
+            "DeepSeek API Key（只用于本会话）",
+            type="password",
+            placeholder="sk-...",
+            key=state.key_input_key(),
+        )
+        _apply_col, _clear_col = st.columns(2)
+        with _apply_col:
+            if st.button("应用 Key", use_container_width=True):
+                state.set_api_key(key_input)
+                state.bump_key_input()  # 换掉密码框，明文不留在页面 DOM 里
+                st.rerun()
+        with _clear_col:
+            if st.button("清除 Key", use_container_width=True):
+                state.clear_api_key()
+                state.bump_key_input()
+                st.rerun()
 
     st.divider()
     picked = st.selectbox("当前角色", names, index=names.index(role_name))

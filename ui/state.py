@@ -1,4 +1,4 @@
-"""UI 状态层：角色 / 人设卡 / 记忆引擎的装配与持久化。
+﻿"""UI 状态层：角色 / 人设卡 / 记忆引擎的装配与持久化。
 
 这一层只做数据搬运与流程编排，不渲染任何视觉组件，便于单独测试与复用。
 所有「写盘」都走原子写；所有 LLM 调用都经 :mod:`core.llm` 或组件包内部。
@@ -63,6 +63,8 @@ def init_session() -> None:
     ss.setdefault("forge_result", None)
     ss.setdefault("view", "💬 对话")
     ss.setdefault("self_note_seeded", False)
+    ss.setdefault("api_key", "")  # 访客自己填的 Key：只活在会话里
+    ss.setdefault("api_key_nonce", 0)  # 密码框的 key 后缀：提交后换一个，等于清空输入框
     for key in ("ab_mid", "ab_long", "ab_mood_gate", "ab_conflict", "ab_auto_consolidate"):
         ss.setdefault(key, True)
 
@@ -626,37 +628,71 @@ def compile_and_preview(description: str, knobs: dict[str, float]) -> Any:
 
 
 def api_key_problem() -> str:
-    """检查环境变量里的 Key 是否像"写了但写错"（返回原因，空串表示没问题）。
+    """检查当前生效的 Key 是否像"写了但写错"（返回原因，空串表示没问题）。
 
     最常见的两种手滑：①把占位符 ``sk-xxxx`` 一起粘进去了；
     ②在 PowerShell 里用 cmd 的 ``set NAME=value``，结果环境变量根本没设上。
     """
-    value = os.getenv("DEEPSEEK_API_KEY", "").strip()
+    value = llm.active_api_key()
     if not value:
         return ""
     if "xxxx" in value.lower() or "你的" in value or value.count("sk-") > 1:
-        return "DEEPSEEK_API_KEY 里还带着占位符（含 xxxx 或重复的 sk- 前缀），请整个替换成真实 Key。"
+        return "API Key 里还带着占位符（含 xxxx 或重复的 sk- 前缀），请整个替换成真实 Key。"
     if not value.startswith("sk-"):
-        return "DEEPSEEK_API_KEY 不是以 sk- 开头，多半是写错了（PowerShell 要用 $env:DEEPSEEK_API_KEY=\"sk-...\"）。"
+        return "API Key 不是以 sk- 开头，多半是写错了（PowerShell 要用 $env:DEEPSEEK_API_KEY=\"sk-...\"）。"
     if len(value) < 20:
-        return "DEEPSEEK_API_KEY 太短了，看起来不像完整 Key。"
+        return "API Key 太短了，看起来不像完整 Key。"
     return ""
 
 
 def api_key_hint() -> str:
-    """API Key / 演示模式状态文案。"""
+    """API Key / 演示模式状态文案（只显示模式与 Key 指纹，永不回显明文）。"""
     if llm.is_demo_mode():
         return "离线演示模式（本地假模型，全链路可跑）"
-    return f"已连接 DeepSeek · {cfg.DEEPSEEK_MODEL}"
+    return llm.mode_label()
+
+
+def session_key_label() -> str:
+    """侧边栏一句状态：本会话是否已用自己的 Key。"""
+    if llm.session_api_key():
+        return f"本会话已使用你自己的 Key {llm.key_fingerprint()}（只存在这个浏览器会话里，别人看不到，也不会写进文件）"
+    if llm.env_api_key():
+        return f"正在使用服务端配置的 Key {llm.key_fingerprint()}（访客看不到明文，也不需要自己填）"
+    return "还没有可用的 Key：可以在下面填自己的，或继续用离线演示模式"
 
 
 def set_api_key(value: str) -> None:
-    """会话内临时注入 API Key（只影响当前进程环境变量）。"""
-    value = value.strip()
-    if value:
-        os.environ["DEEPSEEK_API_KEY"] = value
-    else:
-        os.environ.pop("DEEPSEEK_API_KEY", None)
-    cache_clear = getattr(getattr(llm, "_client", None), "cache_clear", None)
-    if callable(cache_clear):
-        cache_clear()  # 换 key 后必须重建客户端
+    """把 Key 只放进"当前浏览器会话"。
+
+    - 不进 ``os.environ``：Streamlit 的服务进程是全体访客共享的，写环境变量等于把
+      某个人输入的 Key 变成全服共用（别人还能白用他的额度）。
+    - 不落盘、不写日志、不在界面上回显明文，只用 ``key_fingerprint()`` 显示末 4 位。
+    """
+    value = (value or "").strip()
+    st.session_state["api_key"] = value
+    llm.set_session_api_key(value)
+
+
+def key_input_key() -> str:
+    """密码框的 widget key（带 nonce，应用/清除后换一个，等于把输入框清空）。"""
+    return f"api_key_input_{int(st.session_state.get('api_key_nonce', 0))}"
+
+
+def bump_key_input() -> None:
+    """换掉密码框的 key：已提交的明文不会再留在浏览器 DOM 里（避免被旁人点"显示密码"）。"""
+    st.session_state["api_key_nonce"] = key_input_nonce() + 1
+
+
+def key_input_nonce() -> int:
+    return int(st.session_state.get("api_key_nonce", 0))
+
+
+def apply_session_key() -> None:
+    """每次 rerun 开头调用：把本会话的 Key 重新放回上下文（Streamlit 每次重跑是新的上下文）。"""
+    llm.set_session_api_key(st.session_state.get("api_key", "") or "")
+
+
+def clear_api_key() -> None:
+    """忘掉本会话的 Key（回到服务端 Key 或离线演示模式）。"""
+    st.session_state["api_key"] = ""
+    llm.set_session_api_key("")

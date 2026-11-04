@@ -13,6 +13,7 @@ import json
 import os
 import re
 import time
+from contextvars import ContextVar
 from functools import lru_cache
 from typing import Any, Callable, Optional
 
@@ -67,8 +68,75 @@ def key_looks_placeholder(value: str) -> bool:
 
 def configured() -> bool:
     """是否配置了可用的 DeepSeek API Key（占位符/明显写错的 Key 视为未配置）。"""
-    value = os.getenv("DEEPSEEK_API_KEY", "").strip()
+    value = active_api_key()
     return bool(value) and not key_looks_placeholder(value)
+
+
+# ---------------------------------------------------------------------------
+# 会话级 API Key：默认只存在于"输入它的人"这一个浏览器会话里
+#
+# Streamlit 的服务进程是所有访客共享的，所以绝不能把访客输入的 Key 写进
+# os.environ（那是进程级，等于全服共享、还看不见谁在用）。这里用 ContextVar：
+# 每次 rerun 由 UI 层把本会话的 Key 放进来，LLM 调用在同一线程内读它，
+# 天然隔离到"这一个会话"，且不落盘、不进日志。
+# ---------------------------------------------------------------------------
+
+_SESSION_KEY: ContextVar[str] = ContextVar("emo_session_api_key", default="")
+
+
+def set_session_api_key(value: str) -> None:
+    """把当前会话的 Key 放进上下文（空串表示清除）。"""
+    _SESSION_KEY.set((value or "").strip())
+
+
+def session_api_key() -> str:
+    """当前会话自己的 Key（未设置则为空）。"""
+    return _SESSION_KEY.get().strip()
+
+
+def env_api_key() -> str:
+    """服务端环境变量里的 Key（部署时给"公共演示额度"用）。"""
+    return os.getenv("DEEPSEEK_API_KEY", "").strip()
+
+
+def active_api_key() -> str:
+    """本次调用实际使用的 Key：会话级优先，其次服务端环境变量。"""
+    return session_api_key() or env_api_key()
+
+
+def key_fingerprint(value: Optional[str] = None) -> str:
+    """Key 的指纹，只用于界面确认"我连的是哪把 Key"，绝不回显明文。"""
+    raw = (value if value is not None else active_api_key()).strip()
+    if not raw:
+        return ""
+    tail = raw[-4:] if len(raw) >= 4 else raw
+    return f"sk-…{tail}"
+
+
+def key_source() -> str:
+    """Key 的来源：session / env / none（界面上用来提醒"这是你自己的 Key"）。"""
+    if session_api_key():
+        return "session"
+    if env_api_key():
+        return "env"
+    return "none"
+
+
+@lru_cache(maxsize=8)
+def _client(api_key: str) -> OpenAI:
+    return OpenAI(
+        api_key=api_key,
+        base_url=DEEPSEEK_BASE_URL,
+        timeout=60.0,
+        max_retries=1,
+    )
+
+
+def _get_client() -> OpenAI:
+    api_key = active_api_key()
+    if not api_key:
+        raise LLMError("未配置 DEEPSEEK_API_KEY")
+    return _client(api_key)
 
 
 def is_demo_mode() -> bool:
@@ -82,25 +150,11 @@ def is_demo_mode() -> bool:
 
 
 def mode_label() -> str:
-    """给 UI 显示的模式名。"""
-    return "离线演示模式（无需 API Key）" if is_demo_mode() else f"在线模型 {DEEPSEEK_MODEL}"
-
-
-@lru_cache(maxsize=4)
-def _client(api_key: str) -> OpenAI:
-    return OpenAI(
-        api_key=api_key,
-        base_url=DEEPSEEK_BASE_URL,
-        timeout=60.0,
-        max_retries=1,
-    )
-
-
-def _get_client() -> OpenAI:
-    api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
-    if not api_key:
-        raise LLMError("未配置 DEEPSEEK_API_KEY")
-    return _client(api_key)
+    """给 UI 显示的模式名（含 Key 指纹与来源，但不回显明文）。"""
+    if is_demo_mode():
+        return "离线演示模式（无需 API Key）"
+    source = "本会话" if key_source() == "session" else "服务端"
+    return f"在线模型 {DEEPSEEK_MODEL} · {source} Key {key_fingerprint()}"
 
 
 # ---------------------------------------------------------------------------
