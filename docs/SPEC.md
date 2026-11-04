@@ -477,7 +477,7 @@ build_memory_block(bundle, *, include_self=False) -> str
 
 ---
 
-## 9. 界面契约（v4.4，四视图 + 深色主题）
+## 9. 界面契约（v4.5，四视图 + 浅色/深色两套外观）
 
 ### 9.1 视图与归属
 

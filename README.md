@@ -97,6 +97,8 @@ streamlit run app.py
 > 访客在侧边栏填了自己的 Key，仍会切回在线模型——"强制"只对没填 Key 的人生效，
 > 否则会出现「已经用上你的 Key」和「正在离线演示」两句同时出现的怪状态。
 
+界面默认浅色，侧边栏「外观」可一键切到深色（两套配色只换颜色 token，版式与组件规则完全一致）。
+
 界面预览（下面六张都在**离线演示模式**下拍的：没有 API Key 时对话措辞由确定性假模型给出，
 但记忆写入、固化、检索、Trace、遗忘曲线走的都是与在线模式完全相同的那条路径）：
 
@@ -358,7 +360,7 @@ score   = 0.45*sim + 0.20*importance + 0.20*recency + 0.15*emotion
 
 ```
 Emotional-Agent-main/
-├── app.py                    Streamlit 入口：四视图切换（对话 / 记忆舱 / 实验室 / 人格教练），只做编排与渲染
+├── app.py                    Streamlit 入口：四视图切换（对话 / 记忆舱 / 实验室 / 人格教练）+ 侧边栏外观开关，只做编排与渲染
 ├── core/
 │   ├── config.py             全部魔法数字、路径、情绪表、五层参数（唯一改动点）
 │   ├── llm.py                唯一 LLM 入口：JSON Mode + 3 次重试 + 解析兜底 + 演示模式分流
@@ -381,13 +383,13 @@ Emotional-Agent-main/
 │   ├── interview.py          ★ 人格教练：五问元 Prompt + 回答收束成人设速写
 │   └── legacy.py             旧版纯文本人设 → 卡片
 ├── ui/
-│   ├── theme.py              深色主题：一套颜色/字号 token + 全部组件的 CSS 覆盖（改这里等于改全站）
+│   ├── theme.py              外观主题：浅色/深色两套配色 token + 全部组件的 CSS 覆盖（改这里等于改全站）
 │   ├── state.py              会话状态、角色文件、引擎装配、两段式单轮（begin/finish）、原文检索 / 纠正 / 界面偏好
 │   ├── chat.py               对话气泡：自己靠右、TA 靠左，HTML 转义后自绘
 │   ├── panels.py             五层面板 / L0 检索 / 快照 / 自我认知 / Trace / 关系 / 遗忘曲线 / 消融
 │   ├── avatars.py            头像：emoji 或上传图片（格式校验 / 压到 96px / data URI 内联）
 │   └── forge.py              「人设锻造炉」对话框 + 「人格教练」整页
-├── .streamlit/config.toml    深色底 + 强调色（让 Streamlit 自己的组件在首帧就是对的）
+├── .streamlit/config.toml    浅色底 + 强调色（只决定 Streamlit 原生控件的首帧，切换外观时由 theme.py 的 CSS 覆盖）
 ├── tests/                    离线单测（记忆引擎 19 / 人设编译器 19 / 人格教练 6 / 集成 26 / 界面 19 / 头像 7）
 ├── scripts/eval_memory.py    记忆机制离线评测，产出海报指标
 ├── docs/SPEC.md              内部接口契约（含 §8 五层扩展规格）

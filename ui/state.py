@@ -64,7 +64,7 @@ def init_session() -> None:
     ss.setdefault("pending_turn", None)  # 用户已上屏、还没拿到回复的那一句
     ss.setdefault("forge_result", None)
     ss.setdefault("coach", None)  # 人格教练的对话进度
-    ss.setdefault("view", "对话")
+    ss.setdefault("view", "💬 对话")
     ss.setdefault("self_note_seeded", False)
     ss.setdefault("api_key", "")  # 访客自己填的 Key：只活在会话里
     ss.setdefault("api_key_nonce", 0)

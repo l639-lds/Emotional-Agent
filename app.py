@@ -18,10 +18,10 @@ from memory_os import DEFAULT_OPENER as FALLBACK_OPENER
 from ui import avatars, chat, forge, panels, state, theme
 
 USER_AVATAR = "🙂"  # 默认头像；真实值来自侧边栏「我的样子」
-VIEW_CHAT = "对话"
-VIEW_MEMORY = "记忆舱"
-VIEW_LAB = "实验室"
-VIEW_COACH = "人格教练"
+VIEW_CHAT = "💬 对话"
+VIEW_MEMORY = "🧠 记忆舱"
+VIEW_LAB = "🧪 实验室"
+VIEW_COACH = "🧭 人格教练"
 
 
 def _reset_turn_state() -> None:
@@ -94,9 +94,12 @@ avatar = state.avatar_for(role_name, card, role_file)
 # ---------------------------------------------------------------------------
 # 侧边栏
 # ---------------------------------------------------------------------------
+_VIEW_OPTIONS = [VIEW_CHAT, VIEW_MEMORY, VIEW_LAB, VIEW_COACH]
 pending_view = st.session_state.pop("pending_view", None)
-if pending_view:  # 别的组件想跳视图时用它：直接改 key="view" 会因为 widget 已实例化而报错
+if pending_view in _VIEW_OPTIONS:  # 别的组件想跳视图时用它：直接改 key="view" 会因 widget 已实例化而报错
     st.session_state["view"] = pending_view
+if st.session_state.get("view") not in _VIEW_OPTIONS:  # 旧会话里存的是不带 emoji 的旧名字
+    st.session_state["view"] = VIEW_CHAT
 
 
 with st.sidebar:
@@ -104,7 +107,7 @@ with st.sidebar:
 
     view = st.radio(
         "视图",
-        [VIEW_CHAT, VIEW_MEMORY, VIEW_LAB, VIEW_COACH],
+        _VIEW_OPTIONS,
         index=0,
         label_visibility="collapsed",
         key="view",
@@ -122,9 +125,9 @@ with st.sidebar:
         st.session_state["self_note_seeded"] = False
         st.rerun()
 
-    if st.button("锻造新角色", use_container_width=True, type="primary"):
+    if st.button("⚒ 锻造新角色", use_container_width=True, type="primary"):
         forge.forge_dialog()
-    if st.button("和人格教练聊着建角色", use_container_width=True):
+    if st.button("🧭 和人格教练聊着建角色", use_container_width=True):
         st.session_state["pending_view"] = VIEW_COACH
         st.rerun()
 
@@ -133,6 +136,16 @@ with st.sidebar:
     _key_problem = state.api_key_problem()
     if _key_problem:
         st.caption(_key_problem)
+
+    with st.expander("外观", expanded=False):
+        st.radio(
+            "配色",
+            theme.MODES,
+            key=theme.MODE_KEY,
+            horizontal=True,
+            label_visibility="collapsed",
+        )
+        st.caption("浅色适合白天和投屏，深色适合晚上。切换不影响记忆与对话。")
 
     with st.expander("运行模式 / API Key", expanded=False):
         st.caption(

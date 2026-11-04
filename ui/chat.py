@@ -15,7 +15,9 @@ import streamlit as st
 
 from ui import avatars, theme
 
-_CSS = f"""
+def _css() -> str:
+    """按当前配色拼气泡样式（配色由 ui.theme 决定，这里不写死 hex）。"""
+    return f"""
 <style>
 .emo-thread {{ display: flex; flex-direction: column; gap: 26px; margin: 4px 0 26px; }}
 .emo-row {{ display: flex; gap: 14px; align-items: flex-start; }}
@@ -27,10 +29,14 @@ _CSS = f"""
 .emo-body {{ display: flex; flex-direction: column; gap: 6px; max-width: 66ch; min-width: 0; }}
 .emo-row-user .emo-body {{ align-items: flex-end; }}
 .emo-name {{ font-size: 13px; color: {theme.FAINT}; letter-spacing: 0.01em; }}
-.emo-bubble {{ font-size: 15px; line-height: 1.78; padding: 13px 16px; border-radius: 2px;
+.emo-bubble {{ font-size: 15px; line-height: 1.78; padding: 13px 16px;
+  border-radius: var(--radius-bubble); border: 1px solid transparent;
+  box-shadow: var(--bubble-shadow);
   white-space: pre-wrap; word-break: break-word; }}
-.emo-bubble-assistant {{ background: {theme.SURFACE_1}; color: {theme.INK}; }}
-.emo-bubble-user {{ background: {theme.SURFACE_2}; color: {theme.INK}; }}
+.emo-bubble-assistant {{ background: {theme.SURFACE_1}; color: {theme.INK};
+  border-color: var(--bubble-line); border-bottom-left-radius: var(--radius-tail); }}
+.emo-bubble-user {{ background: {theme.ACCENT_SOFT}; color: {theme.INK};
+  border-color: {theme.ACCENT_LINE}; border-bottom-right-radius: var(--radius-tail); }}
 .emo-meta {{ font-size: 13px; color: {theme.FAINT}; line-height: 1.65; }}
 .emo-read {{ font-size: 13px; color: {theme.FAINT}; }}
 .emo-typing {{ display: inline-flex; align-items: center; gap: 6px; padding: 16px; }}
@@ -125,7 +131,7 @@ def typing_html(*, role_name: str, role_avatar: str) -> str:
 
 def render_typing(*, role_name: str, role_avatar: str) -> None:
     """把打字态画在当前对话下面（写盘/等模型之前调用，用户立刻能看到反馈）。"""
-    st.markdown(_CSS, unsafe_allow_html=True)
+    st.markdown(_css(), unsafe_allow_html=True)
     st.markdown(
         f'<div class="emo-col"><div class="emo-thread">'
         f'{typing_html(role_name=role_name, role_avatar=role_avatar)}</div></div>',
@@ -141,7 +147,7 @@ def render_thread(
     user_avatar: str,
 ) -> None:
     """整段对话一次画完（一次性 markdown，避免 Streamlit 在气泡之间插空行）。"""
-    st.markdown(_CSS, unsafe_allow_html=True)
+    st.markdown(_css(), unsafe_allow_html=True)
     rows: list[str] = []
     ordered = list(messages)
     for index, message in enumerate(ordered):

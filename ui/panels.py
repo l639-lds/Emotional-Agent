@@ -21,7 +21,6 @@ def _esc(text: Any) -> str:
     return _html.escape(str(text or ""))
 
 # 一个 accent 只有一种强调：层/类型标签统一走中性 surface，强调只给"活跃"的数值
-_TIER_COLOR = {"short": theme.MUTED, "mid": theme.MUTED, "long": theme.MUTED}
 _TIER_ALIAS = {"short": "短期", "mid": "中期", "long": "长期"}
 
 
@@ -111,7 +110,7 @@ def render_mid(snap: dict[str, Any], role_name: Optional[str] = None) -> None:
                 f"{item.get('created_label', '')}"
             )
             _strength_bar(item.get("strength", 0.0))
-            if role_name and st.button("让 TA 忘掉这段", key=f"forget_mid_{item.get('id')}"):
+            if role_name and st.button("🗑 让 TA 忘掉这段", key=f"forget_mid_{item.get('id')}"):
                 state.forget_memory(role_name, str(item.get("id")), tier="mid")
                 st.rerun()
 
@@ -148,9 +147,9 @@ def render_long(snap: dict[str, Any], role_name: Optional[str] = None) -> None:
             extra += f" · 已被新事实取代（审计保留：{superseded}）"
         cols = st.columns([4, 1, 1])
         cols[0].caption(extra)
-        if role_name and cols[1].button("改正", key=f"correct_{tier}_{fact.get('id')}"):
+        if role_name and cols[1].button("✏️ 改正", key=f"correct_{tier}_{fact.get('id')}"):
             correct_dialog(role_name, fact)
-        if role_name and cols[2].button("忘掉", key=f"forget_{tier}_{fact.get('id')}"):
+        if role_name and cols[2].button("🗑 忘掉", key=f"forget_{tier}_{fact.get('id')}"):
             state.forget_memory(role_name, str(fact.get("id")), tier=tier)
             st.rerun()
 

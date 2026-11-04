@@ -35,11 +35,83 @@ def _kv(label: str, value: Any) -> None:
         st.markdown(f"**{label}**　{text}")
 
 
+def _render_legacy_card(card: PersonaCard) -> None:
+    """旧版卡片（v1 纯文本人设）：只展示它真正有的东西，不拿空字段糊墙。"""
+    raw = _get(card, "legacy_raw", {}) or {}
+    persona = str(raw.get("persona") or "").strip() or str(_get(card, "backstory") or "").strip()
+    opening = str(raw.get("opening") or "").strip()
+    st.caption("旧版纯文本人设（未经人设编译器处理）")
+    if persona:
+        st.markdown("**人设原文**")
+        st.markdown(f"> {persona}")
+    if opening:
+        st.markdown("**开场白**")
+        st.markdown(f"> {opening}")
+    st.caption(
+        "旧版只有一个字符串，所以没有台词锚点、情绪反应表和分阶段的语气；"
+        "用「⚒ 锻造新角色」或「人格教练」重新生成，会得到结构化卡片。"
+    )
+    if not persona:
+        return
+
+    # 一键升级：把旧版原文当成描述，走一遍「生成 → 自评 → 定向重写 → 体检」
+    key = f"legacy_{_get(card, 'name')}"
+    if st.button("⚒ 用这段原文重新编译", key=key):
+        with st.spinner("正在生成 → 自评 → 定向重写 → 体检……"):
+            try:
+                st.session_state["legacy_upgrade"] = {
+                    "source": _get(card, "name"),
+                    "result": compile_persona(persona),
+                }
+            except Exception as exc:  # 编译器内部已降级，这里只防意外
+                st.error(f"编译失败：{exc}")
+                return
+
+    upgrade = st.session_state.get("legacy_upgrade") or {}
+    result = upgrade.get("result")
+    if result is None or upgrade.get("source") != _get(card, "name"):
+        return
+
+    new_card = _get(result, "card", None)
+    if new_card is None:
+        st.error("编译器没有返回人设卡。")
+        return
+
+    st.divider()
+    st.caption(f"编译完成：{_get(new_card, 'tagline') or ''}")
+    scores = _get(_get(result, "critique", None) or {}, "scores", {}) or {}
+    if isinstance(scores, dict) and scores:
+        st.caption("自评：" + "　".join(f"{dim} {int(val or 0)}" for dim, val in scores.items()))
+    health = _get(result, "health", None)
+    if health is not None:
+        st.caption(f"体检：{_get(health, 'score', 0)} 分 · 重写 {_get(result, 'repair_rounds', 0)} 轮")
+    for line in _as_list(_get(_get(new_card, "speech", None) or {}, "sample_lines"))[:3]:
+        st.markdown(f"> {line}")
+
+    values = [int(val or 0) for val in scores.values()] if isinstance(scores, dict) else []
+    avg_score = int(sum(values) / len(values)) if values else None
+    cols = st.columns([2, 1])
+    if cols[0].button("覆盖当前角色（保留记忆）", type="primary", key=f"{key}_over"):
+        new_card.name = _get(card, "name") or _get(new_card, "name")
+        new_card.avatar = _get(card, "avatar") or "🎭"
+        state.save_forged_role(new_card.name, new_card, score=avg_score)
+        st.session_state["legacy_upgrade"] = None
+        state.flash(f"「{new_card.name}」已升级为结构化人设卡，记忆全部保留")
+        st.rerun()
+    if cols[1].button("丢弃", key=f"{key}_drop"):
+        st.session_state["legacy_upgrade"] = None
+        st.rerun()
+    st.caption("升级只改人设卡，不动已有的对话与五层记忆；想另存为新角色可以用「⚒ 锻造新角色」。")
+
+
 def render_card_preview(card: PersonaCard) -> None:
     st.markdown(f"### {_get(card, 'name') or '未命名角色'}")
     tagline = _get(card, "tagline")
     if tagline:
         st.caption(tagline)
+    if _get(card, "legacy", False):
+        _render_legacy_card(card)
+        return
 
     identity = _get(card, "identity", {}) or {}
     if isinstance(identity, dict) and identity:
@@ -57,10 +129,12 @@ def render_card_preview(card: PersonaCard) -> None:
     speech = _get(card, "speech", None)
     if speech is not None:
         st.markdown("**语音指纹**")
-        st.caption(
-            f"语域：{_get(speech, 'register')}　·　平均句长：{_get(speech, 'avg_sentence_len')} 字　·　"
-            f"标点习惯：{_get(speech, 'punctuation')}"
-        )
+        parts = [f"语域：{_get(speech, 'register')}"]
+        if _get(speech, "avg_sentence_len"):
+            parts.append(f"平均句长：{_get(speech, 'avg_sentence_len')} 字")
+        if str(_get(speech, "punctuation") or "").strip():
+            parts.append(f"标点习惯：{_get(speech, 'punctuation')}")
+        st.caption("　·　".join(parts))
         tics = _as_list(_get(speech, "tics"))
         if tics:
             _kv("口癖", " / ".join(tics))
@@ -80,11 +154,14 @@ def render_card_preview(card: PersonaCard) -> None:
             )
 
     arc = _get(card, "relationship_arc", {}) or {}
-    if isinstance(arc, dict) and arc:
+    filled = [(stage, str(arc.get(stage) or "").strip()) for stage in cfg.CANONICAL_STAGES]
+    filled = [(stage, text) for stage, text in filled if text]
+    if filled:
         st.markdown("**关系弧（人格漂移）**")
-        for stage in cfg.CANONICAL_STAGES:
-            if stage in arc:
-                st.caption(f"{stage}：{arc[stage]}")
+        for stage, text in filled:
+            st.caption(f"{stage}：{text}")
+        if len(filled) < len(cfg.CANONICAL_STAGES):
+            st.caption("其余阶段没有单独写语气，沿用上一阶段的人设要求。")
 
     for label, key in (
         ("边界", "boundaries"),
@@ -97,7 +174,7 @@ def render_card_preview(card: PersonaCard) -> None:
             _kv(label, " · ".join(items))
 
     if _get(card, "legacy", False):
-        st.caption("这是从旧版纯文本人设包装而来的卡片（legacy）。重新锻造可升级为结构化卡。")
+        st.caption("旧版卡片只有一段文字，没有分阶段的语气与情绪规则。用「⚒ 锻造新角色」或「人格教练」重新生成，会得到结构化卡片。")
 
 
 def _critique_block(critique: Critique) -> None:
@@ -308,7 +385,7 @@ def render_coach_panel() -> None:
         st.session_state["coach"] = interview.new_state()
         st.session_state["coach_result"] = None
         state.flash(f"已保存角色「{name.strip()}」，可以开始聊天了")
-        st.session_state["pending_view"] = "对话"
+        st.session_state["pending_view"] = "💬 对话"
         st.rerun()
     if cols[1].button("重新聊一次", use_container_width=True):
         st.session_state["coach"] = interview.new_state()

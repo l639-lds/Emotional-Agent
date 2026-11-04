@@ -20,8 +20,8 @@ TURNS = (
     "我妈最近住院了，我有点撑不住。",
     "我还喜欢下雨天，安静。",
 )
-VIEW_MEMORY = "记忆舱"
-VIEW_LAB = "实验室"
+VIEW_MEMORY = "🧠 记忆舱"
+VIEW_LAB = "🧪 实验室"
 
 
 @pytest.fixture()
@@ -399,3 +399,24 @@ def test_uploaded_avatar_renders_as_image_in_bubbles(app):
     ui_state.set_user_avatar("🐱")
     assert ui_state.user_avatar() == "🐱"
     assert avatars.path_of(token) is None, "换掉图片头像后旧文件应该被清理"
+
+
+def test_legacy_card_can_be_upgraded_in_place(app):
+    """旧版纯文本角色能在人设卡里一键重编译成结构化卡，且不动已有记忆。"""
+    from ui import state as ui_state
+
+    role = app.session_state["role"]
+    assert ui_state.get_card(role).legacy, "内置角色是 v1 纯文本，应该是 legacy 卡"
+    opening_before = ui_state.opening_for(role, ui_state.get_card(role))
+
+    next(button for button in app.button if "用这段原文重新编译" in button.label).click().run()
+    assert not app.exception, app.exception
+    assert "编译完成" in " ".join(item.value for item in app.caption)
+
+    next(button for button in app.button if "覆盖当前角色" in button.label).click().run()
+    assert not app.exception, app.exception
+    upgraded = ui_state.get_card(role)
+    assert not upgraded.legacy, "升级之后应该不再是 legacy 卡"
+    assert upgraded.speech.sample_lines, "结构化卡应该有台词锚点"
+    assert app.session_state["role"] == role, "升级只换人设卡，不换当前角色"
+    assert ui_state.opening_for(role, upgraded) == opening_before, "开场白不能被升级改掉"
