@@ -83,15 +83,19 @@ streamlit run app.py
 | `DEEPSEEK_MODEL` | `deepseek-flash` | 对话与结构化调用使用的模型 |
 | `EMO_DEMO_MODE` | 未设置 | 设为 `1` 强制离线演示模式（答辩兜底） |
 
-界面预览（离线演示模式，五轮对话之后）：
+界面预览（接真实模型跑的；`EMO_DEMO_MODE=1` 时措辞会变成固定的本地模板）：
 
-| 对话 | 记忆舱 · 五层总览 |
+| 对话（你的气泡在右） | 刚发出、还在等 TA 回忆 |
 |---|---|
-| ![对话](docs/screenshots/01-chat.png) | ![记忆舱](docs/screenshots/02-memory-cabin.png) |
+| ![对话](docs/screenshots/01-chat.png) | ![发送中](docs/screenshots/05-sending.png) |
 
-| L0 原文库 · 搜索 | 实验室 · 本轮 Trace |
+| 记忆舱 · 五层总览 | 实验室 · 本轮 Trace |
 |---|---|
-| ![原文库](docs/screenshots/04-archive-search.png) | ![Trace](docs/screenshots/03-lab-trace.png) |
+| ![记忆舱](docs/screenshots/02-memory-cabin.png) | ![Trace](docs/screenshots/03-lab-trace.png) |
+
+| L0 原文库 · 搜索 | 🧭 人格教练 · 五问访谈 |
+|---|---|
+| ![原文库](docs/screenshots/04-archive-search.png) | ![人格教练](docs/screenshots/06-coach.png) |
 
 自检：
 
