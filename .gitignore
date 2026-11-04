@@ -40,3 +40,5 @@ data/*.backup.json
 .DS_Store
 Thumbs.db
 *.log
+
+docs/cover/preview.png

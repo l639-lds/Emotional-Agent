@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EmoMem · 封面</title>
+<style>
+  @page { size: A4 portrait; margin: 0; }
+  :root{
+    --ink:#EAF2FF;
+    --muted:#A9BCE0;
+    --dim:#7992BE;
+    --orange:#F6A93B;
+    --line:rgba(126,168,255,.22);
+    --card:rgba(8,20,54,.5);
+    --l0:#38BDF8; --l1:#60A5FA; --l2:#F59E0B; --l3:#34D399; --l4:#F472B6;
+  }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  html,body{ width:210mm; height:297mm; }
+  body{
+    background:#050F2B url("template.jpg") center center / cover no-repeat;
+    -webkit-print-color-adjust:exact; print-color-adjust:exact;
+    font-family:"Source Han Sans SC","Noto Sans SC","Microsoft YaHei","PingFang SC","Segoe UI",sans-serif;
+    color:var(--ink);
+    overflow:hidden;
+  }
+  .page{ position:relative; width:210mm; height:297mm; }
+
+  /* 文字区背后的柔和压暗：保证在网格上可读，同时不遮挡顶栏与底部 logo */
+  .veil{
+    position:absolute; inset:0; pointer-events:none;
+    background:
+      radial-gradient(92% 58% at 50% 45%, rgba(3,10,32,.62) 0%, rgba(3,10,32,.30) 62%, rgba(3,10,32,0) 100%),
+      linear-gradient(180deg, rgba(3,10,32,0) 13%, rgba(3,10,32,.34) 27%, rgba(3,10,32,.34) 72%, rgba(3,10,32,0) 86%);
+  }
+
+  .content{ position:absolute; left:17mm; right:17mm; top:46mm; }
+
+  .eyebrow{
+    font-size:9.2pt; letter-spacing:.3em; color:var(--dim);
+    display:flex; align-items:center; gap:3.2mm; white-space:nowrap;
+  }
+  .eyebrow::after{ content:""; flex:1; height:1px; background:linear-gradient(90deg,var(--line),rgba(126,168,255,0)); }
+
+  h1{
+    margin-top:8.4mm; font-size:56pt; line-height:1.02; letter-spacing:.005em; font-weight:700;
+    background:linear-gradient(180deg,#FFFFFF 0%,#D7E6FF 60%,#9CB9EE 100%);
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+  }
+  .sub{ margin-top:3.6mm; font-size:15pt; color:var(--muted); letter-spacing:.16em; }
+
+  .tagline{ margin-top:8mm; font-size:20pt; line-height:1.52; font-weight:600; letter-spacing:.02em; }
+  .tagline em{ font-style:normal; color:#FFD08A; }
+
+  .rule{
+    margin:8.6mm 0 7.4mm; height:1px;
+    background:linear-gradient(90deg,var(--line) 0%,rgba(126,168,255,.06) 74%,rgba(126,168,255,0) 100%);
+  }
+
+  /* 五层记忆：一条贯穿的层带 */
+  .layers{ display:flex; align-items:stretch; gap:2.2mm; }
+  .layer{
+    flex:1; background:rgba(10,24,60,.55); border:1px solid var(--line);
+    border-radius:2.4mm; padding:2.6mm 2.4mm 2.4mm; position:relative;
+  }
+  .layer::before{
+    content:""; position:absolute; left:2.4mm; right:2.4mm; top:0; height:2px;
+    border-radius:2px; background:var(--tier);
+  }
+  .layer b{ display:block; font-size:12.6pt; font-weight:700; color:var(--tier); letter-spacing:.02em; }
+  .layer span{ display:block; margin-top:1.2mm; font-size:8.6pt; color:var(--muted); }
+  .l0{ --tier:var(--l0); } .l1{ --tier:var(--l1); } .l2{ --tier:var(--l2); }
+  .l3{ --tier:var(--l3); } .l4{ --tier:var(--l4); }
+  .layers-note{ margin-top:2.8mm; font-size:8.6pt; color:var(--dim); letter-spacing:.03em; }
+  .layers-note b{ color:#C9D9F7; font-weight:600; }
+
+  .cards{ margin-top:7.4mm; display:grid; grid-template-columns:repeat(3,1fr); gap:3.8mm; }
+  .card{
+    background:var(--card); border:1px solid var(--line); border-radius:3mm;
+    padding:4.6mm 4.2mm 4.2mm;
+  }
+  .card .num{ font-size:15.4pt; font-weight:700; line-height:1.05; letter-spacing:.01em; color:#FFC26B; }
+  .card .label{ margin-top:2.2mm; font-size:10.4pt; font-weight:600; }
+  .card .desc{ margin-top:1.5mm; font-size:8.3pt; line-height:1.6; color:var(--dim); }
+  .card:nth-child(1) .num{ color:#7FB6FF; }
+  .card:nth-child(3) .num{ color:#FF9CC4; }
+
+  .points{ margin-top:6.6mm; display:grid; gap:2.5mm; }
+  .point{ display:flex; gap:2.8mm; font-size:9.8pt; color:var(--muted); line-height:1.55; }
+  .point i{ flex:none; width:1.4mm; height:1.4mm; margin-top:2.1mm; border-radius:50%; background:var(--orange); }
+  .point b{ color:var(--ink); font-weight:600; }
+
+  .foot{
+    position:absolute; left:17mm; right:17mm; bottom:41mm;
+    display:flex; justify-content:space-between; align-items:flex-end; gap:6mm;
+    font-size:8.4pt; color:#8AA2CC; letter-spacing:.03em;
+  }
+  .foot .repo{ font-family:"Cascadia Mono","SF Mono",Consolas,monospace; font-size:8pt; color:#A8C4F5; }
+  .foot .note{ text-align:right; line-height:1.62; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="veil"></div>
+
+  <div class="content">
+    <div class="eyebrow">EMOTIONAL COMPANION · MEMORY OS · PERSONA FORGE</div>
+
+    <h1>EmoMem</h1>
+    <div class="sub">情感陪伴 Agent</div>
+
+    <p class="tagline">它记得住你，<br>也说得清<em>为什么</em>记得。</p>
+
+    <div class="rule"></div>
+
+    <div class="layers">
+      <div class="layer l0"><b>L0</b><span>原文库</span></div>
+      <div class="layer l1"><b>L1</b><span>会话层</span></div>
+      <div class="layer l2"><b>L2</b><span>长期事实</span></div>
+      <div class="layer l3"><b>L3</b><span>固化快照</span></div>
+      <div class="layer l4"><b>L4</b><span>自我认知</span></div>
+    </div>
+    <div class="layers-note">前三层记的都是「你」，<b>L4 记的是「它」</b>——那不是资料，是性格的连续性。</div>
+
+    <div class="cards">
+      <div class="card">
+        <div class="num">查 · 删 · 改</div>
+        <div class="label">记忆主权</div>
+        <div class="desc">每条记忆可检索、可遗忘、可纠正；<br>改动留痕，不悄悄覆盖。</div>
+      </div>
+      <div class="card">
+        <div class="num">每 4 轮</div>
+        <div class="label">睡眠整理</div>
+        <div class="desc">对话压成情节与事实，<br>再写一段「它对自己的认识」。</div>
+      </div>
+      <div class="card">
+        <div class="num">5 问</div>
+        <div class="label">人格教练</div>
+        <div class="desc">访谈成稿 → 六维自评 → 定向重写 →<br>三问体检，产出一张可执行人设卡。</div>
+      </div>
+    </div>
+
+    <div class="points">
+      <div class="point"><i></i><span><b>情绪加权检索</b>：说得越多越容易被想起；难过时先接住情绪，不翻旧账。</span></div>
+      <div class="point"><i></i><span><b>可解释 Trace</b>：这一轮注入了什么、为什么是它，摊开给你看。</span></div>
+      <div class="point"><i></i><span><b>关系会漂移</b>：亲密度决定关系阶段，阶段决定语气；信任只做一件事——让你敢碰旧事。</span></div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <div class="repo">github.com/l639-lds/Emotional-Agent</div>
+    <div class="note">离线演示模式：没有 API Key 也能跑通全链路<br>Streamlit · DeepSeek · 纯 Python 记忆引擎</div>
+  </div>
+</div>
+</body>
+</html>

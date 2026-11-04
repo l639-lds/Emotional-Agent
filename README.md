@@ -360,6 +360,9 @@ Emotional-Agent-main/
 ├── scripts/eval_memory.py    记忆机制离线评测，产出海报指标
 ├── docs/SPEC.md              内部接口契约（含 §8 五层扩展规格）
 ├── docs/答辩稿.md / .docx     3 分钟一页口播稿（数字与 metrics.json 一致）
+├── docs/cover/               项目封面：cover.html / cover.pdf（A4 竖版，套用赛事背景板）
+│   ├── template.jpg          赛事方给的主视觉底图（封面背景）
+│   └── build_cover.py        一键重建封面（Chrome 无头打印，不依赖 Python 包）
 ├── docs/poster/              A2 海报：poster.pdf / poster.png / poster.html
 │   ├── build_poster.py       一键重建海报（自带版式与裁切自检）
 │   ├── make_docx.py          答辩稿 md → 一页 docx
@@ -460,6 +463,7 @@ Emotional-Agent-main/
 
 ## 15. 答辩材料
 
+- `docs/cover/cover.pdf` / `cover.html`：项目封面（A4 竖版，套用赛事主视觉；重建 `python docs/cover/build_cover.py`）
 - `docs/poster/poster.pdf`：A2 竖版海报（420×594mm，1 页）
 - `docs/poster/poster.png`：海报 1588×2245 预览图
 - `docs/答辩稿.md` / `docs/答辩稿.docx`：3 分钟一页口播稿（900–1100 字）
