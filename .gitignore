@@ -27,8 +27,12 @@ env/
 # Runtime data: contains private conversations, memories, and custom roles
 data/memory.json
 data/custom_roles.json
+data/archive/
 data/*.tmp
 data/*.backup.json
+
+# Office lock files
+~$*
 
 # OS / logs
 .DS_Store

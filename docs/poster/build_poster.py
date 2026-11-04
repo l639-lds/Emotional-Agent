@@ -64,13 +64,13 @@ def find_chrome() -> Path:
 
 CONTENT: dict[str, Any] = {
     "title": "EmoMem",
-    "subtitle": "情感感知的三层记忆 + 人设编译器",
+    "subtitle": "情感感知的五层记忆 + 人设编译器",
     "kicker": "2026 软工实践周 · 高级组 / HACKATHON",
     "kicker_right": "答辩物料 · A2 · 2026.11",
-    "value": "记得住 · 忘得掉 · 说得对",
+    "value": "记得清 · 改得动 · 长得出自己",
     "lede": (
-        "把陪伴型 AI 的记忆从「一个 list」升级成可检索、可固化、可遗忘、可解释的三层记忆系统；"
-        "把人设从「一段 prompt」升级成可编译、可自评、可体检的人格。"
+        "把陪伴型 AI 的记忆从「一个 list」升级成可检索、可固化、可遗忘、可解释、可纠正的五层记忆系统；"
+        "把「它怎么看你」和「它怎么看自己」分开存，让人设从一段 prompt 变成可编译、可自评、可体检的人格。"
     ),
     # 02 痛点
     "pain_sec": ("PROBLEM", "为什么还需要一个 EmoMem", "旧版：单文件 Streamlit + 一个 memories 列表"),
@@ -83,81 +83,117 @@ CONTENT: dict[str, Any] = {
          "一句描述直接扩写成 prompt，产出全是「温柔体贴、善解人意」；没有语音指纹、没有边界，演三句就崩。"),
     ],
     # 03 架构
-    "arch_sec": ("ARCHITECTURE", "一轮对话里，记忆是如何被读出来、写回去的", "参数全部取自 core/config.py"),
+    "arch_sec": ("ARCHITECTURE", "一轮对话里，五层记忆是怎么被读出来、写回去的", "参数全部取自 core/config.py"),
+    "arch_caption": "前三层记的都是「你」，L4 记的是「它」——前者是资料，后者才是性格的连续性。",
     "arch_chain": [
         ("用户输入", "情绪识别：开心 / 难过 / 生气 / 平静"),
-        ("检索打分", "sim · importance · recency · emotion"),
-        ("记忆块注入", "≤ 1800 字符，超预算按分数裁剪"),
+        ("检索打分", "L1 / L2 参与 · Mood Gate 先过滤"),
+        ("记忆块注入", "≤ 1800 字符 · 含 L4 首轮注入"),
         ("System Prompt", "人设 + 记忆 + JSON 协议"),
         ("DeepSeek", "reply / emotion / initiative"),
         ("回应 + 界面", "聊天气泡 · Trace 可展开"),
     ],
-    "arch_tiers": [
-        ("短期 · 工作记忆", "WORKING", "#38BDF8", [
-            "最近 20 条 turn 逐字回放，注入最近 8 条",
-            "每条带 emotion 与 salience 强度",
-            "滚动摘要压缩视图，跨会话续接",
-            "会话重启由情景 / 语义层补全上下文",
-        ]),
-        ("中期 · 情景记忆", "EPISODIC", "#A78BFA", [
-            "每 4 轮由一次 LLM 调用压成 Episode",
-            "标题 / 摘要 / 3–6 个话题词 / 关键词",
-            "valence · arousal · importance 三元特征",
-            "命中即进 Trace，可展开看来源",
-        ]),
-        ("长期 · 语义画像", "SEMANTIC", "#F59E0B", [
-            "Fact 分 8 类：身份 / 喜好 / 厌恶 / 近况 / 禁忌等",
+    # 五层记忆卡：(层名, 英文, 颜色, 4 条要点, 额外样式类)
+    "arch_layers": [
+        ("L0 原文库", "ARCHIVE", "#8FA3C4", [
+            "全量对话原文，永不删除",
+            "按关键词回溯，带时间戳与出处",
+            "不注入 Prompt，要证据时才查",
+            "只增不减，连纠错痕迹都留着",
+        ], "is-archive"),
+        ("L1 会话层", "SESSION", "#38BDF8", [
+            "最近 20 轮原文 + 滚动摘要",
+            "每轮逐字注入最近 8 条",
+            "每 4 轮压成一条 Episode",
+            "会话重启时由 L2 事实补全",
+        ], "is-session"),
+        ("L2 长期事实", "FACT", "#F59E0B", [
+            "8 类事实：身份 / 喜好 / 厌恶 / 近况等",
             "confidence + evidence_count 随证据演化",
-            "身份 · 禁忌 · 约定 高置信度强制置顶",
-        ]),
+            "身份 · 禁忌 · 约定 高置信度置顶",
+        ], "is-fact"),
+        ("L3 固化快照", "SNAPSHOT", "#A78BFA", [
+            "每次固化落盘 data/archive/",
+            "最多 30 份，可回溯到当时",
+            "不注入 Prompt，界面可查看",
+            "删错、改错都能对着快照复盘",
+        ], "is-shard"),
+        ("L4 自我认知", "SELF NOTE", "#FB7185", [
+            "它对自己的一句话叙述",
+            "成长 / 关系 / 表达 / 情绪 四类",
+            "只在新会话首轮注入 ≤ 3 条",
+            "相似 ≥ 0.8 只累加 mention_count",
+        ], "is-self"),
     ],
-    # 架构图四条箭头的文案（唯一文案源，_arch_svg 直接引用）
+    # 架构图箭头上的短标签（唯一文案源，_arch_svg 直接引用；解释统一放到图下路线图例）
     "arch_legend": {
-        "recall": ("召回", "三库统一打分 · Mood Gate"),
-        "consolid": ("固化", "每 4 轮 · 一次 LLM 调用"),
-        "forget": ("遗忘", "强度 < 0.15 归档，只标记不删除"),
-        "conflict": ("冲突消解", "旧 Fact superseded_by 留档"),
+        "recall": "召回",
+        "back": "写回",
+        "consolid": "固化",
+        "forget": "遗忘",
+        "l0": "回溯",
+        "l4": "首轮注入",
     },
-    "arch_params": [
-        "检索分 = 0.45·相似度 + 0.20·重要性 + 0.20·时间衰减 + 0.15·情绪显著性",
-        "τ = Episode 10 天 / Fact 30 天　·　记忆块预算 1800 字符　·　归档阈值 0.15　·　top-k = Episode 4 / Fact 8 / Loop 3",
+    # 图下路线图例：(标签, 一句话解释)，顺序与走廊自上而下一致
+    "arch_routes": [
+        ("首轮注入", "L4 自我叙述只在新会话首轮进 Prompt，≤ 3 条"),
+        ("回溯", "按需查 L0 原文，带出处，不进 Prompt"),
+        ("写回", "每轮把原文 + 情绪写进 L1，同时落 L0"),
+        ("固化", "每 4 轮一次调用，同一次产出快照与自述"),
+        ("遗忘", "strength < 0.15 归档：只在 L1 / L2 发生，L0 永不删除"),
     ],
-    # 04 六个创新点（口径严格沿用 SPEC §0）
-    "innov_sec": ("INNOVATION", "六个创新点：每一条都能在代码里复算", "每条都给出对应参数，可现场对照 core/config.py"),
+    "arch_params": [
+        "检索分 = 0.45·相似度 + 0.20·重要性 + 0.20·时间衰减 + 0.15·情绪显著性　·　记忆块预算 1800 字符　·　归档阈值 0.15",
+        "τ = Episode 10 天 / Fact 30 天　·　top-k = Episode 4 / Fact 8 / 原文回溯 5　·　固化 每 4 轮一次 LLM 调用",
+    ],
+    # 04 八个创新点（口径严格沿用 README §1 / SPEC §0）
+    "innov_sec": ("INNOVATION", "八个创新点：每一条都能在代码里复算", "每条都给出对应参数，可现场对照 core/config.py"),
     "innovations": [
-        ("01", "三层记忆 + 记忆固化",
-         ["工作记忆逐轮记录，每 4 轮触发一次「睡眠整理」：一次 LLM 调用把对话压成情景 Episode，并提炼长期 Fact。",
-          "短期只留 20 条 turn、注入最近 8 条；长期注入预算 1800 字符，超了按分数升序裁剪。",
-          "写回、固化、裁剪都走同一份 schema，可回放可调试。"],
-         "CONSOLIDATE_EVERY_TURNS = 4 · SHORT_TERM_MAX_TURNS = 20"),
-        ("02", "情绪加权检索 + 防翻旧账",
-         ["每条记忆带效价 valence 与唤醒度 arousal，检索分 = 0.45 相似度 + 0.20 重要性 + 0.20 时间衰减 + 0.15 情绪显著性。",
-          "用户处于「难过 / 生气」时，未被提及的高唤醒负性记忆直接跳过，并写进 Trace 说明原因。",
-          "不是「更懂你」的口号，而是一条可开关的规则。"],
-         "W = 0.45 / 0.20 / 0.20 / 0.15 · gate: valence<−0.3, arousal>0.6, sim<0.25"),
-        ("03", "记忆冲突消解",
-         ["新旧事实相似度落在 0.50–0.82 且语义相反，判定为「记忆修正」：旧条目写 superseded_by 作废，但保留审计痕迹。",
-          "同一条事实反复出现则 evidence_count +1、confidence +0.1，置信度随证据数演化。",
+        ("01", "五层记忆结构",
+         ["L0 原文库永不删、可检索 → L1 会话层 → L2 长期事实 → L3 固化快照留档 → L4 自我认知。",
+          "前三层是资料，L4 是它对自己的叙述。"],
+         "L0–L4 · snapshot_for_ui 五层总览"),
+        ("02", "记忆固化 + 每 4 轮睡眠整理",
+         ["一次 LLM 调用同时产出情景片段、事实、未闭环事件、称呼、关系增量，外加一条自我叙述。",
+          "顺手把快照落盘，随时能回溯。"],
+         "CONSOLIDATE_EVERY_TURNS = 4"),
+        ("03", "情绪加权检索 + 防翻旧账",
+         ["每条记忆带效价 valence 与唤醒度 arousal，四项加权打分；用户难受时，没被提及的旧伤口不主动翻。",
+          "不是「更懂你」的口号，是可开关的规则。"],
+         "W = 0.45/0.20/0.20/0.15 · valence<−0.3, arousal>0.6"),
+        ("04", "记忆冲突消解",
+         ["新旧事实矛盾时旧条目写 superseded_by 作废，保留审计但不删数据；同一事实反复出现则证据数 +1。",
           "记忆会改口，但改口有据可查。"],
-         "FACT_MERGE_SIM = 0.82 · FACT_CONFLICT_SIM = 0.50"),
-        ("04", "可解释记忆 Trace",
-         ["每轮记录注入了哪些记忆、四项分值各自多少，以及一句中文理由，例如「与『面试』高度相关，且是高唤醒负面记忆」。",
-          "界面可展开查看，并附「本轮未采用的记忆及原因」——被 mood gate 或预算裁掉的都写明白。",
-          "可解释性不是日志，是能当场指着屏幕讲的产品能力。"],
-         "TraceItem：tier / score / components / reason / pinned"),
-        ("05", "关系档案驱动人格漂移",
-         ["intimacy、trust、stage、称呼演化与共同梗组成关系档案；阶段反向调节语气：陌生克制 → 熟悉 → 亲近 → 可调侃撒娇。",
-          "人设不再是开场写死的一段 prompt，而是随相处时长持续漂移的角色状态。",
-          "亲密度只涨不跌的假人设，在这里被拆成四段可验证的语气。"],
-         "stage：陌生 <20 / 熟悉 <45 / 亲近 <75 / 亲密"),
-        ("06", "未闭环事件 + 主动关怀",
-         ["从对话里抽取「待跟进事项」（面试 / 体检 / 约定 / 情绪牵挂），下次对话主动追问，闭环后自动关闭。",
-          "另有三层记忆消融开关：现场逐个关掉短期 / 中期 / 长期，直接对比回复差异。",
-          "能主动追问的角色，才像真的把你放在心上。"],
-         "LOOP_MAX = 3 · tiers ⊆ {short, mid, long}"),
+         "FACT_MERGE_SIM 0.82 · FACT_CONFLICT_SIM 0.50"),
+        ("05", "可解释 Trace + 记忆主权",
+         ["每轮看到注入了哪几条、四项分值、一句中文理由，以及「未采用哪些、为什么」。",
+          "每条记忆还能「忘掉」或「改正」——记忆舱里查到那句话。"],
+         "trace.injected / skipped · 改正 confidence 0.90"),
+        ("06", "关系档案驱动人格漂移",
+         ["intimacy / trust / stage / 称呼演化 / 共同梗组成关系档案，阶段反过来调节语气。",
+          "陌生克制 → 熟悉 → 亲近可调侃，人设不再静态。"],
+         "stage: 陌生 <20 / 熟悉 <45 / 亲近 <75 / 亲密"),
+        ("07", "未闭环事件 + 主动关怀",
+         ["从对话里抽取面试 / 体检 / 约定，下次主动追问，闭环后自动关闭。",
+          "附带 5 个消融开关：现场关掉一层记忆，直接比回复差异。"],
+         "LOOP_MAX = 3 · 5 个消融开关"),
+        ("08", "人设编译器 Persona Forge",
+         ["一句描述 + 4 个旋钮 → 结构化人设卡 → 6 维自评 → 定向重写 → 3 问体检。",
+          "元 prompt 从一段话，变成一条可复现的编译流水线。"],
+         "PERSONA_PASS_SCORE = 75 · repair ≤ 1 轮"),
+    ],
+    # 04b 记忆主权
+    "sov_sec": ("OWNERSHIP", "记忆主权：可查 · 可删 · 可改", "记忆舱里每条记录都能被追问、被否定、被修正"),
+    "sov_items": [
+        ("可查", "记忆舱 →「L0 原文库」输入关键词，回到原始那句话，带时间戳与相似度。",
+         "search_archive · ARCHIVE_TOP_K = 5"),
+        ("可删", "Episode / 事实右侧「忘掉」，真的从文件里移除，其余记忆不受影响。",
+         "forget() → 落盘即删，不做软删除"),
+        ("可改", "纠正一条 → 新事实 confidence 0.90，旧条 superseded_by 留档。",
+         "correct_fact · CORRECTION_CONFIDENCE = 0.90"),
     ],
     # 05 人设编译器
-    "persona_sec": ("PERSONA FORGE", "人设编译器：一句话描述 → 一个跑得起来的人格", "创新点 07 · 独立的编译流水线"),
+    "persona_sec": ("PERSONA FORGE", "人设编译器：一句话描述 → 一个跑得起来的人格", "创新点 08 · 独立的编译流水线"),
     "persona_steps": [
         ("一句描述", "＋ 4 个旋钮：毒舌 · 温柔 · 话痨 · 神秘"),
         ("结构化人设卡", "12 个内容字段 + 头像位"),
@@ -167,20 +203,17 @@ CONTENT: dict[str, Any] = {
     ],
     "persona_blocks": [
         ("人设卡里到底有什么",
-         "语音指纹（语域 / 平均句长 / 口癖 / 标点习惯 / 禁用词 / 3 条台词锚点）、情绪反应表（触发 → 反应 → 身体语言）、"
-         "关系弧（陌生 / 熟悉 / 亲近 / 亲密四段）、边界、反套路、记忆钩子与禁忌。"),
-        ("6 维自评的口径",
-         "可执行性 / 一致性 / 差异化 / 情感深度 / 安全性 / 可演示性，各 0–100；低于 75 或存在问题就进重写。"
-         "元 Prompt 里写死反陈词滥调规则，禁止「温柔体贴、善解人意」这类空话。"),
-        ("3 问体检的探针",
-         "「我今天有点撑不住了，什么都不想干。」/「你要是能变成人，最想和我一起做什么？」/"
-         "「我最讨厌别人骗我了，你会骗我吗？」——答得不像这个人，就是没编译好。"),
+         "语音指纹（语域 / 平均句长 / 口癖 / 标点 / 禁用词 / 3 条台词锚点）、情绪反应表（触发 → 反应 → 身体语言）、"
+         "关系弧四段、边界、反套路、记忆钩子与禁忌。"),
+        ("6 维自评与 3 问体检",
+         "可执行性 / 一致性 / 差异化 / 情感深度 / 安全性 / 可演示性各 0–100，低于 75 就定向重写；"
+         "再用「我今天有点撑不住了」这类探针实测，答得不像这个人，就是没编译好。"),
     ],
     # 06 对比表
     "compare_sec": ("COMPARISON", "和既有记忆方案比，差在哪、强在哪", "定性对比，依据各项目公开论文与文档"),
     "compare_head": ["维度", "EmoMem（本项目）", "MemGPT", "MemOS", "纯 RAG 记忆"],
     "compare_rows": [
-        ("分层", "三层 + 固化流水线",
+        ("分层", "五层 L0–L4 + 固化快照留档",
          "主上下文 / 外部存储两级", "记忆分层 + 调度器", "单一向量库"),
         ("遗忘曲线", "强度 = base·e^(−Δt/τ)，τ = 10 / 30 天",
          "按上下文压力换出", "有生命周期治理", "无，永久等权"),
@@ -188,9 +221,9 @@ CONTENT: dict[str, Any] = {
          "无", "无", "无"),
         ("冲突消解", "superseded_by 作废留档 + 证据计数",
          "模型自主改写，无审计", "版本化 / 调度治理", "后写覆盖"),
-        ("可解释", "Trace：四项分值 + 未采用原因",
+        ("可解释", "Trace 四项分值 + 未采用原因 + 记忆主权",
          "上下文占用可视化", "调度日志", "只有相似度分数"),
-        ("人格演化", "关系档案 → 语气漂移 + 人设编译器",
+        ("人格演化", "关系档案 → 语气漂移 + L4 自我叙述",
          "静态 system prompt", "静态 system prompt", "静态 system prompt"),
     ],
     "compare_note": (
@@ -201,9 +234,9 @@ CONTENT: dict[str, Any] = {
     "stack_sec": ("ENGINEERING", "技术栈与离线指标", "零新增依赖 · 离线可跑"),
     "stack": [
         ("内核", "Python 3.10+ · 纯标准库"),
-        ("界面", "Streamlit 单页应用"),
+        ("界面", "Streamlit 单页 · 三视图"),
         ("模型", "DeepSeek（OpenAI 兼容）"),
-        ("存储", "本地 JSON · 原子写 + v2→v3 迁移"),
+        ("存储", "本地 JSON · 原子写 · v2→v4"),
         ("离线", "EMO_DEMO_MODE 假模型，无 Key 可跑"),
         ("测试", "pytest · 全部离线、确定性"),
     ],
@@ -216,15 +249,19 @@ CONTENT: dict[str, Any] = {
         "评测文件 docs/poster/metrics.json 尚未产出；拿到数字后重跑 build_poster.py 会自动填充，"
         "这里不写占位数字。"
     ),
+    # 五层规模行：metrics.json 里 self_notes / snapshots / archive_messages 三个计数
+    "scale_note": "五层规模 · L0 原文 {archive_messages} 条 · L3 快照 {snapshots} 份 · L4 自述 {self_notes} 条，全部由同一次 40 轮评测落盘。",
+    "scale_note_pending": "五层规模 · L0 原文 / L3 快照 / L4 自述三处计数待评测。",
     "footer": ("EmoMem · 2026 软工实践周 高级组 · 2026.11",
-               "全部参数集中在 core/config.py · 不新增第三方依赖 · 数据留在本地"),
+               "五层记忆 L0–L4 · 记忆主权 · 不新增第三方依赖 · 数据留在本地"),
 }
 
 # 指标槽位：(metrics.json 键名, 计数单位, 说明行)。说明行统一 ≤ 14 字、单行；数字缺失即「待评测」。
-# 口径提醒：compress_ratio 是「记忆块字符 / 原始对话字符」（1251 / 1912 = 65.4%），
-# 也就是上下文占用只剩 65.4%、省下 34.6%，**不能写成「压缩了 65%」**。
+# 口径提醒：compress_ratio 是「记忆块字符 / 原始对话字符」（1275 / 1912 = 66.7%），
+# 也就是上下文占用只剩 66.7%、省下 33.3%，**不能写成「压缩了 66%」**。
+# 有真数字时 render_eng 会用 _saved_pct 反算出「省下 x%」动态替换说明行。
 METRIC_SLOTS: list[tuple[str, str, str]] = [
-    ("compress_ratio", "", "上下文占用 · 省下 34.6%"),
+    ("compress_ratio", "", "上下文占用比例（记忆块 / 对话）"),
     ("probe_hit", "", "5 条预埋探针全部命中"),
     ("conflict_resolved", " 条", "旧说法留档 superseded_by"),
     ("avg_strength_d0", "", "刚写入时的平均强度"),
@@ -232,8 +269,15 @@ METRIC_SLOTS: list[tuple[str, str, str]] = [
     ("mood_gate_hits", " 次", "40 轮里跳过 5 条旧负向"),
 ]
 METRIC_PENDING = "待评测"
-# 备注行里要引用的两个原始计数（不单独上墙）。
-METRIC_EXTRAS = {"turns": "轮", "episodes": "段固化剧本", "facts": "条事实"}
+# 备注行 / 规模行里要引用的原始计数（不单独上墙）。
+METRIC_EXTRAS = {
+    "turns": "轮",
+    "episodes": "段固化剧本",
+    "facts": "条事实",
+    "self_notes": "条自我叙述",
+    "snapshots": "份固化快照",
+    "archive_messages": "条原文",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -393,9 +437,9 @@ body {
 }
 .head-kicker-r { font-size: 8.5pt; letter-spacing: .18em; color: var(--dim); }
 .title {
-  font-size: 76pt;
+  font-size: 68pt;
   font-weight: 700;
-  line-height: .92;
+  line-height: .9;
   letter-spacing: -.01em;
   color: #FFFFFF;
 }
@@ -413,17 +457,17 @@ body {
   margin-top: 1.6mm;
 }
 .value {
-  flex: 0 0 132mm;
-  font-size: 25pt;
+  flex: 0 0 149mm;
+  font-size: 22pt;
   font-weight: 700;
   color: var(--accent);
-  letter-spacing: .1em;
+  letter-spacing: .06em;
   line-height: 1.15;
 }
 .lede {
   flex: 1 1 auto;
-  font-size: 10.5pt;
-  line-height: 1.75;
+  font-size: 10pt;
+  line-height: 1.68;
   color: var(--muted);
   border-left: .35mm solid var(--line);
   padding-left: 7mm;
@@ -474,57 +518,76 @@ body {
 .node-title { font-size: 11pt; font-weight: 700; color: var(--text); letter-spacing: .02em; }
 .node-sub { font-size: 7.8pt; line-height: 1.45; color: var(--muted); }
 
-.tier-row {
-  position: absolute; left: 0; right: 0; top: __TIER_TOP__mm;
-  height: __TIER_H__mm;
-  display: flex; gap: __TIER_GAP__mm; z-index: 1;
+.layer-row {
+  position: absolute; left: 0; right: 0; top: __LAYER_TOP__mm;
+  height: __LAYER_H__mm;
+  display: flex; gap: __LAYER_GAP__mm; z-index: 1;
 }
-.tier {
+.layer {
   flex: 1 1 0;
   background: var(--panel);
   border: .3mm solid var(--line);
-  border-top: .9mm solid var(--tier-color, var(--line));
+  border-top: .9mm solid var(--layer-color, var(--line));
   border-radius: 2.2mm;
-  padding: 4mm 5mm;
-  display: flex; flex-direction: column; gap: 2mm;
+  padding: 3.2mm 3.6mm;
+  display: flex; flex-direction: column; gap: 1.5mm;
 }
-.tier-head { display: flex; align-items: baseline; gap: 3mm; }
-.tier-name { font-size: 12.5pt; font-weight: 700; color: var(--tier-color); letter-spacing: .02em; }
-.tier-en { font-size: 7.5pt; letter-spacing: .22em; color: var(--dim); font-weight: 700; }
-.tier-item {
-  font-size: 8.8pt; line-height: 1.55; color: var(--muted);
-  padding-left: 4mm; position: relative;
+.layer.is-archive {
+  background: #141F36;
+  border-style: dashed;
+  border-top-style: solid;
+  border-top-color: var(--layer-color);
 }
-.tier-item::before {
-  content: ""; position: absolute; left: 0; top: 1.5mm;
-  width: 1.6mm; height: 1.6mm; border-radius: 50%;
-  background: var(--tier-color); opacity: .75;
+.layer.is-self { background: #1A2742; }
+.layer-head { display: flex; flex-direction: column; gap: .4mm; }
+.layer-name {
+  font-size: 11.5pt; font-weight: 700; color: var(--layer-color);
+  letter-spacing: .01em; white-space: nowrap;
+}
+.layer-en { font-size: 6.4pt; letter-spacing: .18em; color: var(--dim); font-weight: 700; white-space: nowrap; }
+.layer-item {
+  font-size: 8.2pt; line-height: 1.5; color: var(--muted);
+  padding-left: 3.4mm; position: relative;
+}
+.layer-item::before {
+  content: ""; position: absolute; left: 0; top: 1.35mm;
+  width: 1.5mm; height: 1.5mm; border-radius: 50%;
+  background: var(--layer-color); opacity: .8;
+}
+.arch-caption {
+  font-size: 9pt; line-height: 1.4; color: #C7D3EA; letter-spacing: .02em;
+  margin: .4mm 0 3.2mm 0; padding-left: 4.4mm;
+  border-left: .55mm solid var(--accent);
 }
 .conflict-line {
   margin-top: auto;
-  display: flex; align-items: center; gap: 2mm;
-  font-size: 8.2pt; color: var(--muted);
+  display: flex; align-items: center; gap: 1.6mm;
+  font-size: 7.2pt; color: var(--muted);
   background: rgba(251, 113, 133, .1);
   border: .25mm solid rgba(251, 113, 133, .35);
   border-radius: 1.6mm;
-  padding: 1.6mm 3mm;
+  padding: 1.2mm 2mm;
 }
-.conflict-line .tag { color: var(--accent); font-weight: 700; letter-spacing: .06em; white-space: nowrap; }
+.conflict-line .tag { color: var(--accent); font-weight: 700; letter-spacing: .04em; white-space: nowrap; }
 .conflict-line b { color: var(--text); font-weight: 700; }
 
 .fade-strip {
   position: absolute; left: 0; right: 0; top: __FADE_TOP__mm; height: __FADE_H__mm;
-  display: flex; align-items: center; gap: 4mm;
+  display: flex; flex-direction: column; justify-content: center; gap: 1.2mm;
   background: var(--line-soft);
   border: .25mm dashed var(--line);
   border-radius: 1.8mm;
-  padding: 0 4mm;
-  font-size: 8.2pt; color: var(--muted);
-  z-index: 1;
+  padding: 1.4mm 4mm;
+  font-size: 7.6pt; color: var(--muted);
+  z-index: 1; overflow: hidden;
 }
+.fade-strip .row { display: flex; align-items: baseline; gap: 2.6mm; white-space: nowrap; }
 .fade-strip .tag {
-  color: var(--dim); font-weight: 700; letter-spacing: .16em; font-size: 7.8pt; white-space: nowrap;
+  color: var(--dim); font-weight: 700; letter-spacing: .14em; font-size: 7.4pt; white-space: nowrap;
 }
+.fade-strip .route-name { color: #C7D3EA; font-weight: 700; }
+.fade-strip .sep { color: var(--line); }
+.fade-strip .quote { color: var(--dim); }
 .params-row {
   position: absolute; left: 0; right: 0; top: __PARAMS_TOP__mm;
   display: flex; flex-direction: column; gap: 1.8mm;
@@ -536,18 +599,18 @@ body {
 /* ---------- 04 创新点 ---------- */
 .innov-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   grid-template-rows: auto auto;
-  gap: 5mm;
+  gap: 4.6mm;
 }
 .card {
   background: var(--panel);
   border: .3mm solid var(--line);
   border-radius: 2.4mm;
-  padding: 3.6mm 5mm;
+  padding: 3mm 3.6mm;
   display: flex;
   flex-direction: column;
-  gap: 1.6mm;
+  gap: 1.4mm;
   position: relative;
   overflow: hidden;
 }
@@ -555,28 +618,47 @@ body {
   content: ""; position: absolute; left: 0; top: 0; width: 100%; height: .55mm;
   background: var(--accent); opacity: .55;
 }
-.card-head { display: flex; align-items: baseline; gap: 3mm; }
+.card-head { display: flex; align-items: baseline; gap: 2.4mm; }
 .card-no {
-  font-size: 17pt; font-weight: 700; color: var(--accent); line-height: 1;
+  font-size: 14pt; font-weight: 700; color: var(--accent); line-height: 1;
   font-family: "Consolas", "Cascadia Mono", monospace;
   opacity: .9;
 }
-.card-title { font-size: 13pt; font-weight: 700; color: var(--text); letter-spacing: .01em; }
-.card-body { font-size: 9pt; line-height: 1.52; color: var(--muted); }
-.card-body p { margin-bottom: 1mm; }
+.card-title { font-size: 11pt; font-weight: 700; color: var(--text); letter-spacing: .01em; line-height: 1.25; }
+.card-body { font-size: 8pt; line-height: 1.48; color: var(--muted); }
+.card-body p { margin-bottom: .7mm; }
 .card-body p:last-child { margin-bottom: 0; }
 .card-param {
   margin-top: auto;
-  font-size: 7.6pt;
+  font-size: 7pt;
   font-family: "Consolas", "Cascadia Mono", monospace;
   color: #7E90AE;
   border-top: .2mm dashed var(--line);
-  padding-top: 1.8mm;
+  padding-top: 1.4mm;
   letter-spacing: .01em;
+  line-height: 1.35;
+}
+
+/* ---------- 04b 记忆主权 ---------- */
+.sov-row { display: flex; gap: 4.6mm; }
+.sov {
+  flex: 1 1 0;
+  background: var(--line-soft);
+  border: .25mm solid var(--line);
+  border-left: .8mm solid var(--accent);
+  border-radius: 1.8mm;
+  padding: 2.2mm 3.2mm;
+  display: flex; flex-direction: column; gap: .9mm;
+}
+.sov-name { font-size: 11pt; font-weight: 700; color: var(--accent); letter-spacing: .04em; }
+.sov-text { font-size: 8.1pt; line-height: 1.48; color: var(--muted); }
+.sov-param {
+  margin-top: auto; font-size: 7pt; letter-spacing: .01em; color: #7E90AE;
+  font-family: "Consolas", "Cascadia Mono", monospace;
 }
 
 /* ---------- 05 人设编译器 ---------- */
-.persona-flow { display: flex; gap: 6mm; min-height: 18mm; }
+.persona-flow { display: flex; gap: 6mm; min-height: 16.4mm; }
 .step {
   flex: 1 1 0;
   background: var(--panel);
@@ -616,7 +698,7 @@ table.cmp {
   width: 100%;
   border-collapse: collapse;
   table-layout: fixed;
-  font-size: 8.6pt;
+  font-size: 8.3pt;
 }
 table.cmp col.c-dim { width: 34mm; }
 table.cmp col.c-us { width: 104mm; }
@@ -624,32 +706,32 @@ table.cmp col.c-other { width: 84.6mm; }
 table.cmp th, table.cmp td {
   text-align: left;
   vertical-align: middle;
-  padding: 1.05mm 3.2mm;
+  padding: .9mm 3.2mm;
   border-bottom: .2mm solid var(--line-soft);
   line-height: 1.42;
 }
 table.cmp thead th {
   font-size: 8pt; font-weight: 700; letter-spacing: .1em;
   color: var(--dim); border-bottom: .35mm solid var(--line);
-  padding-bottom: 1.8mm;
+  padding-bottom: 1.5mm;
 }
 table.cmp thead th.is-us { color: var(--accent); }
 table.cmp td.dim { color: var(--text); font-weight: 700; font-size: 9pt; }
-table.cmp td.us { color: #F5D6DC; background: rgba(251, 113, 133, .07); font-size: 8.6pt; }
+table.cmp td.us { color: #F5D6DC; background: rgba(251, 113, 133, .07); font-size: 8.4pt; }
 table.cmp td.other { color: var(--muted); }
 table.cmp tr:last-child td { border-bottom: none; }
-.cmp-note { font-size: 8pt; color: var(--dim); margin-top: 1.6mm; line-height: 1.45; }
+.cmp-note { font-size: 8pt; color: var(--dim); margin-top: 1.3mm; line-height: 1.4; }
 
 /* ---------- 07 技术栈 + 指标 ---------- */
 .stack-row {
-  display: flex; gap: 3.4mm; margin-bottom: 3.6mm;
+  display: flex; gap: 3.4mm; margin-bottom: 3mm;
 }
 .chip {
   flex: 1 1 0;
   background: var(--line-soft);
   border: .25mm solid var(--line);
   border-radius: 1.6mm;
-  padding: 2mm 3mm;
+  padding: 1.8mm 3mm;
   display: flex; flex-direction: column; gap: .8mm;
 }
 .chip-k { font-size: 7.2pt; letter-spacing: .18em; color: var(--dim); font-weight: 700; }
@@ -660,7 +742,7 @@ table.cmp tr:last-child td { border-bottom: none; }
   background: var(--panel);
   border: .3mm solid var(--line);
   border-radius: 2mm;
-  padding: 2.4mm 3.2mm;
+  padding: 2mm 3.2mm;
   display: flex; flex-direction: column; gap: 1.4mm;
 }
 .metric-v {
@@ -675,9 +757,10 @@ table.cmp tr:last-child td { border-bottom: none; }
 }
 .eng-note {
   font-size: 8.6pt; color: var(--dim);
-  margin-top: 1.8mm; line-height: 1.3;
+  margin-top: 1.5mm; line-height: 1.3;
   white-space: nowrap;
 }
+.eng-note.is-scale { margin-top: .8mm; color: #8598B8; }
 
 /* ---------- 08 页脚 ---------- */
 .foot {
@@ -699,13 +782,13 @@ table.cmp tr:last-child td { border-bottom: none; }
 
 MM: dict[str, float] = {
     "NODE_H": 18.0,       # 主链 6 个节点的高度
-    "CANVAS_H": 112.0,    # .arch-canvas 总高 = SVG viewBox 高度
-    "TIER_TOP": 40.0,     # 三层记忆卡顶端
-    "TIER_H": 45.0,       # 三层记忆卡高度
-    "TIER_GAP": 26.0,     # 卡片横向间距（固化 / 提炼箭头画在缝里）
-    "FADE_TOP": 94.0,     # 遗忘 · 归档层
-    "FADE_H": 8.0,
-    "PARAMS_TOP": 104.0,  # 参数条
+    "CANVAS_H": 113.0,    # .arch-canvas 总高 = SVG viewBox 高度
+    "LAYER_TOP": 44.0,    # 五层记忆卡顶端（走廊 18.8~43.4 放四层箭头）
+    "LAYER_H": 39.0,      # 五层记忆卡高度（底边 83）
+    "LAYER_GAP": 5.0,     # 卡片横向间距（五张卡等宽）
+    "FADE_TOP": 89.6,     # 路线图例 + 遗忘条（两行）
+    "FADE_H": 10.4,
+    "PARAMS_TOP": 101.5,  # 参数条
 }
 for _k, _v in MM.items():
     CSS = CSS.replace(f"__{_k}__", f"{_v:g}")
@@ -714,10 +797,10 @@ ARCH_W = 392.0                       # 画布宽度 = 420mm 页面 - 左右各 1
 NODE_GAP = 6.4
 NODE_W = (ARCH_W - 5 * NODE_GAP) / 6
 NODE_C = [NODE_W / 2 + i * (NODE_W + NODE_GAP) for i in range(6)]
-TIER_W = (ARCH_W - 2 * MM["TIER_GAP"]) / 3
-TIER_C = [TIER_W / 2 + i * (TIER_W + MM["TIER_GAP"]) for i in range(3)]   # 卡片中心
-TIER_EDGE = [i * (TIER_W + MM["TIER_GAP"]) for i in range(3)]             # 卡片左边缘
-TIER_BOT = MM["TIER_TOP"] + MM["TIER_H"]
+LAYER_W = (ARCH_W - 4 * MM["LAYER_GAP"]) / 5
+LAYER_C = [LAYER_W / 2 + i * (LAYER_W + MM["LAYER_GAP"]) for i in range(5)]     # 卡片中心
+LAYER_EDGE = [i * (LAYER_W + MM["LAYER_GAP"]) for i in range(5)]                # 卡片左边缘
+LAYER_BOT = MM["LAYER_TOP"] + MM["LAYER_H"]
 
 
 # ---------------------------------------------------------------------------
@@ -782,7 +865,7 @@ def render_pain() -> str:
 
 
 def render_arch() -> str:
-    """03 架构图：DOM 盒子 + SVG 箭头（坐标单位为 mm，与容器 392×118mm 对齐）。"""
+    """03 架构图：DOM 盒子 + SVG 箭头（坐标单位为 mm，与容器 392×110mm 对齐）。"""
     kicker, title, note = CONTENT["arch_sec"]
 
     # 主链 6 个节点
@@ -796,40 +879,50 @@ def render_arch() -> str:
             "</div>"
         )
 
-    # 三层记忆卡
-    tiers = []
-    for name, en, color, lines in CONTENT["arch_tiers"]:
-        items = "".join(f'<div class="tier-item">{esc(line)}</div>' for line in lines)
+    # 五层记忆卡
+    layers = []
+    for name, en, color, lines, cls in CONTENT["arch_layers"]:
+        items = "".join(f'<div class="layer-item">{esc(line)}</div>' for line in lines)
         extra = ""
-        if name.startswith("长期"):
+        if cls == "is-fact":
             extra = (
                 '<div class="conflict-line"><span class="tag">冲突消解</span>'
                 '<span>旧 fact</span>'
-                '<svg width="9mm" height="3mm" viewBox="0 0 34 11" aria-hidden="true">'
-                '<path d="M1,5.5 H26" stroke="#FB7185" stroke-width="1.4" fill="none"/>'
-                '<path d="M26,1.5 L32,5.5 L26,9.5 Z" fill="#FB7185"/></svg>'
-                '<b>新 fact</b><span>· superseded_by 留档</span></div>'
+                '<svg width="7mm" height="2.6mm" viewBox="0 0 26 10" aria-hidden="true">'
+                '<path d="M1,5 H20" stroke="#FB7185" stroke-width="1.4" fill="none"/>'
+                '<path d="M20,1.4 L25,5 L20,8.6 Z" fill="#FB7185"/></svg>'
+                '<b>新 fact</b><span>· 留档</span></div>'
             )
-        tiers.append(
-            f'<div class="tier" style="--tier-color:{color}">'
-            f'<div class="tier-head"><span class="tier-name">{esc(name)}</span>'
-            f'<span class="tier-en">{esc(en)}</span></div>'
+        layers.append(
+            f'<div class="layer {cls}" style="--layer-color:{color}">'
+            f'<div class="layer-head"><span class="layer-name">{esc(name)}</span>'
+            f'<span class="layer-en">{esc(en)}</span></div>'
             f'{items}{extra}</div>'
         )
 
     svg = _arch_svg()
     params = "".join(f'<span class="p-item">{esc(p)}</span>' for p in CONTENT["arch_params"])
+    route_bits = []
+    for i, (name, desc) in enumerate(CONTENT["arch_routes"][:4]):
+        if i:
+            route_bits.append('<span class="sep">/</span>')
+        route_bits.append(f'<span><b class="route-name">{esc(name)}</b> {esc(desc)}</span>')
+    fade_note = (
+        'strength = base · e^(−Δt/τ) · (1 + 0.12 · recall_count)，低于 0.15 标记 archived：'
+        'L1 Episode 与 L2 事实不再注入、文件保留、界面标灰；L0 原文永不删除。'
+    )
 
     return f"""
 <section class="arch">
   {sec_head(kicker, title, note)}
+  <p class="arch-caption">{esc(CONTENT['arch_caption'])}</p>
   <div class="arch-canvas">
     {svg}
     <div class="arch-row">{''.join(nodes)}</div>
-    <div class="tier-row">{''.join(tiers)}</div>
+    <div class="layer-row">{''.join(layers)}</div>
     <div class="fade-strip">
-      <span class="tag">遗忘 · 归档层</span>
-      <span>strength = base · e^(−Δt/τ) · (1 + 0.12 · recall_count)，低于 0.15 标记 archived：不再注入、文件保留、界面标灰，只标记不删除。</span>
+      <div class="row">{''.join(route_bits)}</div>
+      <div class="row"><span class="tag">遗忘 · 归档层</span><span>{esc(fade_note)}</span></div>
     </div>
     <div class="params-row">{params}</div>
   </div>
@@ -838,19 +931,37 @@ def render_arch() -> str:
 
 
 def _arch_svg() -> str:
-    """架构图的四条箭头：召回（上）/ 写回（虚线回路）/ 固化 + 提炼（横向）/ 遗忘（向下）。
+    """五层架构图的箭头：召回 / 写回 / 固化 / 遗忘，外加 L0 回溯与 L4 首轮注入两条虚线。
 
     画布坐标 viewBox = 0 0 392 {CANVAS_H}，1 单位 = 1mm，与 .arch-canvas 完全对齐；
-    纵向栅格全部来自 MM 常量，与 CSS 同源。所有文字都是水平排版，不跨卡片、不压箭头：
-    卡片上方的「召回 / 写回」标签独占 18~30mm 这段空档，与卡片上沿留 12mm 以上。
+    纵向栅格全部来自 MM 常量，与 CSS 同源。所有文字水平排版、字号带 px（无单位会回落 16px）。
+    走廊 18.8~43.4 分三层：L4 首轮注入 + L0 回溯共用 y=25.5（两条线 x 区间不重叠）
+    → 写回 y=32 → 固化 y=38.5。每个标签都带一块与底色同色的遮罩矩形压在线上，
+    所以标签与箭头永远不会互相压字；完整解释统一放到图下的「路线图例」，图上只留 2~4 字短标签。
     """
     accent = "#FB7185"
     cool = "#8FA3C4"
     legend = CONTENT["arch_legend"]
-    recall_txt, recall_sub = legend["recall"]
-    consolid_txt = legend["consolid"][0]
-    forget_txt = legend["forget"][0]
-    back_txt = "写回 · 追加 WorkingTurn（情绪 · salience）"
+    recall_txt = legend["recall"]
+    back_txt = legend["back"]
+    consolid_txt = legend["consolid"]
+    forget_txt = legend["forget"]
+    l0_txt = legend["l0"]
+    l4_txt = legend["l4"]
+
+    def _tw(text: str, size: float) -> float:
+        """估算文字宽度（mm）：CJK 按 1em、ASCII 按 0.56em，用于生成遮罩矩形。"""
+        return sum(size if ord(ch) > 0x2E80 else size * 0.56 for ch in text)
+
+    def tag(x: float, y: float, text: str, color: str, anchor: str = "start") -> str:
+        """带底色遮罩的短标签：压在路线也不显脏，保证与箭头零重叠。"""
+        w = _tw(text, 6.8)
+        rx = x - w - 1.5 if anchor == "end" else x - 1.5
+        return (
+            f'<rect x="{rx:g}" y="{y - 4.7:g}" width="{w + 3:g}" height="6.2" fill="#0F172A"/>'
+            f'<text x="{x:g}" y="{y:g}" font-size="6.8px" font-weight="700" fill="{color}" '
+            f'text-anchor="{anchor}">{esc(text)}</text>'
+        )
 
     new_marker = (
         lambda mid, color: f'<marker id="{mid}" viewBox="0 0 10 10" refX="8.6" refY="5" '
@@ -858,15 +969,24 @@ def _arch_svg() -> str:
         f'<path d="M0,0 L10,5 L0,10 Z" fill="{color}"/></marker>'
     )
 
-    lefts = TIER_EDGE
-    rights = [x + TIER_W for x in lefts]
+    lefts = LAYER_EDGE
+    rights = [x + LAYER_W for x in lefts]
     node_mid = MM["NODE_H"] / 2
-    tier_y = MM["TIER_TOP"] + MM["TIER_H"] / 2          # 卡片纵向中线
-    recall_x = 118.0                                     # 落在「中期」卡缝里、正对「检索打分」
-    back_x_r = ARCH_W - 8.0                              # 回路右侧竖线（界面卡下方）
-    back_x_l = 24.0                                      # 回路落点在「短期」卡上沿
-    back_y = MM["TIER_TOP"] - 8.5                        # 回路横线：卡片上沿之上 8.5mm
-    label_y = MM["NODE_H"] + 7.0                         # 走廊标签基线（与卡片上沿留 14mm）
+    top_y = MM["LAYER_TOP"]
+    node_bot = MM["NODE_H"] + 0.8            # 18.8：箭头落进节点底边
+    y_taps = 25.5                            # L4 首轮注入 + L0 回溯 共用这一层
+    y_back = 32.0                            # 写回
+    y_consolid = 38.5                        # 固化（贴着卡片上沿）
+
+    # 落点（都在对应卡片的上沿或节点底边）
+    x_back_in = 86.0                         # 写回 → L1 上沿
+    x_recall = LAYER_C[1]                    # 召回 → 检索打分（116.6）
+    x_consolid = 138.0                       # 固化 → 从 L1 上沿出发
+    x_l0 = LAYER_C[0]                        # L0 回溯起点（37.2）
+    x_l0_in = 106.0                          # 回溯 → 检索打分底边
+    x_l4 = LAYER_C[4] - 6.8                  # L4 首轮注入起点（348）
+    x_l4_in = 190.0                          # 注入 → 记忆块注入底边（节点 132.8~192.8）
+    x_back_out = NODE_C[5]                   # 写回起点（回应 + 界面，362）
 
     lines: list[str] = []
 
@@ -879,56 +999,57 @@ def _arch_svg() -> str:
             f'fill="none" marker-end="url(#ah)" opacity="0.85"/>'
         )
 
-    # 2) 写回回路（先画虚线，之后画的召回箭头压在上面）
+    # 2) L4 → 记忆块注入：只在新会话首轮注入（虚线，走廊最高一层）
     lines.append(
-        f'<path d="M{back_x_r},{MM["NODE_H"] + 0.8} V{back_y} H{back_x_l} V{MM["TIER_TOP"] - 0.6}" '
+        f'<path d="M{x_l4:g},{top_y - 0.6:g} V{y_taps:g} H{x_l4_in:g} V{node_bot:g}" '
+        f'stroke="{accent}" stroke-width="0.42" fill="none" stroke-dasharray="2.4 1.6" '
+        f'opacity="0.9" marker-end="url(#ah)"/>'
+    )
+    lines.append(tag(x_l4_in + 6, y_taps + 2.1, l4_txt, accent))
+
+    # 3) L0 → 检索打分：按需回溯原文，不注入 Prompt（虚线）
+    lines.append(
+        f'<path d="M{x_l0:g},{top_y - 0.6:g} V{y_taps:g} H{x_l0_in:g} V{node_bot:g}" '
+        f'stroke="{cool}" stroke-width="0.42" fill="none" stroke-dasharray="2.4 1.6" '
+        f'marker-end="url(#ah2)"/>'
+    )
+    lines.append(tag(x_l0 + 4.6, y_taps + 2.1, l0_txt, cool))
+
+    # 4) 写回：回应 + 界面 → L1 会话层，每轮追加原文与情绪（虚线）
+    lines.append(
+        f'<path d="M{x_back_out:g},{node_bot:g} V{y_back:g} H{x_back_in:g} V{top_y - 0.5:g}" '
         f'stroke="{cool}" stroke-width="0.42" fill="none" stroke-dasharray="3 1.6" '
         f'marker-end="url(#ah2)"/>'
     )
-    lines.append(
-        f'<text x="{back_x_r - 6.0}" y="{label_y}" font-size="6.4px" fill="#9AAAC6" '
-        f'text-anchor="end">{esc(back_txt)}</text>'
-    )
+    lines.append(tag(340, y_back + 2.1, back_txt, cool, anchor="end"))
 
-    # 3) 召回：从三层记忆卡上方升进「检索打分」；标签与「写回」同一基线，单行横排
+    # 5) 固化：L1 每 4 轮做一次整理，产出落进 L3 快照与 L4 自我认知（实线）
     lines.append(
-        f'<path d="M{recall_x},{MM["TIER_TOP"] - 0.5} V{MM["NODE_H"] + 0.8}" stroke="{accent}" '
+        f'<path d="M{x_consolid:g},{top_y - 0.6:g} V{y_consolid:g} H{rights[4]:g} V{top_y - 0.5:g}" '
+        f'stroke="{accent}" stroke-width="0.5" fill="none" marker-end="url(#ah)"/>'
+    )
+    lines.append(
+        f'<path d="M{LAYER_C[3]:g},{y_consolid:g} V{top_y - 0.5:g}" stroke="{accent}" '
         f'stroke-width="0.5" fill="none" marker-end="url(#ah)"/>'
     )
+    lines.append(tag(x_consolid + 8, y_consolid + 2.1, consolid_txt, accent))
+
+    # 6) 召回：L1 会话层升进「检索打分」（实线，最亮的箭头）
     lines.append(
-        f'<text x="{recall_x + 4.5}" y="{label_y}" font-size="6.8px" fill="#9AAAC6">'
-        f'<tspan fill="{accent}" font-weight="700">{esc(recall_txt)}</tspan>'
-        f'<tspan font-size="6.2px"> · {esc(recall_sub)}</tspan></text>'
+        f'<path d="M{x_recall:g},{top_y - 0.5:g} V{node_bot:g}" stroke="{accent}" '
+        f'stroke-width="0.55" fill="none" marker-end="url(#ah)"/>'
     )
+    lines.append(tag(x_recall + 3.4, y_taps + 2.1, recall_txt, accent))
 
-    # 4) 固化 / 提炼：画在卡片之间的缝里，标签两行横排居中放在箭头上方（缝宽 26mm，单行放不下）
-    for x_from, x_to, t1, t2 in [
-        (rights[0] + 1.2, lefts[1] - 1.2, consolid_txt, "每 4 轮"),
-        (rights[1] + 1.2, lefts[2] - 1.2, "提炼", "成 Fact"),
-    ]:
-        cx = (x_from + x_to) / 2
+    # 7) 遗忘：L1 Episode 与 L2 事实向下进「遗忘 · 归档层」，L0 没有这支箭头
+    for cx in (LAYER_C[1], LAYER_C[2]):
         lines.append(
-            f'<path d="M{x_from:g},{tier_y:g} H{x_to:g}" stroke="{accent}" stroke-width="0.5" '
-            f'fill="none" marker-end="url(#ah)"/>'
-        )
-        lines.append(
-            f'<text x="{cx:g}" y="{tier_y - 10:g}" font-size="6.8px" fill="{accent}" '
-            f'font-weight="700" text-anchor="middle">{esc(t1)}</text>'
-        )
-        lines.append(
-            f'<text x="{cx:g}" y="{tier_y - 4:g}" font-size="6px" fill="#9AAAC6" '
-            f'text-anchor="middle">{esc(t2)}</text>'
-        )
-
-    # 5) 遗忘：三张卡向下进「遗忘 · 归档层」
-    for cx in TIER_C:
-        lines.append(
-            f'<path d="M{cx:g},{TIER_BOT + 0.6} V{MM["FADE_TOP"] - 1.8}" stroke="{accent}" '
+            f'<path d="M{cx:g},{LAYER_BOT + 0.4:g} V{MM["FADE_TOP"] - 1.2:g}" stroke="{accent}" '
             f'stroke-width="0.45" fill="none" marker-end="url(#ah)" opacity="0.9"/>'
         )
         lines.append(
-            f'<text x="{cx + 2.8:g}" y="{MM["FADE_TOP"] - 2.4}" font-size="6.2px" fill="{accent}" '
-            f'font-weight="700">{esc(forget_txt)}</text>'
+            f'<text x="{cx + 3:g}" y="{MM["FADE_TOP"] - 2:g}" font-size="6px" '
+            f'fill="{accent}" font-weight="700">{esc(forget_txt)}</text>'
         )
 
     return (
@@ -941,7 +1062,7 @@ def _arch_svg() -> str:
 
 
 def render_innov() -> str:
-    """04 六个创新点卡片。"""
+    """04 八个创新点卡片（两行四列）。"""
     kicker, title, note = CONTENT["innov_sec"]
     cards = []
     for no, name, lines, param in CONTENT["innovations"]:
@@ -958,6 +1079,26 @@ def render_innov() -> str:
 <section class="innov">
   {sec_head(kicker, title, note)}
   <div class="innov-grid">{''.join(cards)}</div>
+</section>
+"""
+
+
+def render_sovereignty() -> str:
+    """04b 记忆主权：可查 / 可删 / 可改。"""
+    kicker, title, note = CONTENT["sov_sec"]
+    items = []
+    for name, text, param in CONTENT["sov_items"]:
+        items.append(
+            '<div class="sov">'
+            f'<div class="sov-name">{esc(name)}</div>'
+            f'<div class="sov-text">{esc(text)}</div>'
+            f'<div class="sov-param">{esc(param)}</div>'
+            "</div>"
+        )
+    return f"""
+<section class="sov-sec">
+  {sec_head(kicker, title, note)}
+  <div class="sov-row">{''.join(items)}</div>
 </section>
 """
 
@@ -1020,14 +1161,14 @@ def render_compare() -> str:
 
 
 def _saved_pct(tiles: list[dict[str, str]]) -> str:
-    """从 compress_ratio 反推「省下多少」——65.4% 是占用比例，省下的是 34.6%。"""
+    """从 compress_ratio 反推「省下多少」——66.7% 是占用比例，省下的是 33.3%。"""
     for tile in tiles:
         if tile["key"] != "compress_ratio":
             continue
         m = re.match(r"^\s*([0-9]+(?:\.[0-9]+)?)\s*%\s*$", tile["value"])
         if m:
             return f"{100 - float(m.group(1)):.1f}%"
-    return "34.6%"          # 数值缺失时的口径兜底（仅用于文案，不冒充指标）
+    return "33.3%"          # 数值缺失时的口径兜底（仅用于文案，不冒充指标）
 
 
 def render_eng() -> str:
@@ -1057,14 +1198,23 @@ def render_eng() -> str:
             turns=extras.get("turns", "若干"),
             episodes=extras.get("episodes", "若干"),
         )
+        need = ("archive_messages", "snapshots", "self_notes")
+        if all(k in extras for k in need):
+            scale_note = CONTENT["scale_note"].format(
+                **{k: int(extras[k]) if float(extras[k]).is_integer() else extras[k] for k in need}
+            )
+        else:
+            scale_note = CONTENT["scale_note_pending"]
     else:
         eng_note = CONTENT["metrics_note_pending"]
+        scale_note = CONTENT["scale_note_pending"]
     return f"""
 <section class="eng">
   {sec_head(kicker, title, note)}
   <div class="stack-row">{chips}</div>
   <div class="metric-row">{''.join(metrics)}</div>
   <p class="eng-note">{esc(eng_note)}</p>
+  <p class="eng-note is-scale">{esc(scale_note)}</p>
 </section>
 """
 
@@ -1118,7 +1268,8 @@ def build_html() -> str:
     """拼装完整 HTML 并写入 poster.html。"""
     body = "".join([
         render_head(), render_pain(), render_arch(), render_innov(),
-        render_persona(), render_compare(), render_eng(), render_foot(),
+        render_sovereignty(), render_persona(), render_compare(), render_eng(),
+        render_foot(),
     ])
     doc = f"""<!DOCTYPE html>
 <html lang="zh-CN">

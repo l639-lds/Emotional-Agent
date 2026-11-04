@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
+import uuid
 from typing import Any, Optional
 
 import streamlit as st
@@ -59,6 +61,8 @@ def init_session() -> None:
     ss.setdefault("retry", None)
     ss.setdefault("last_turn", None)
     ss.setdefault("forge_result", None)
+    ss.setdefault("view", "💬 对话")
+    ss.setdefault("self_note_seeded", False)
     for key in ("ab_mid", "ab_long", "ab_mood_gate", "ab_conflict", "ab_auto_consolidate"):
         ss.setdefault(key, True)
 
@@ -313,6 +317,7 @@ def reset_role_memory(name: str) -> None:
     chats = data.setdefault("chats", {})
     chats[name] = []
     store.save(data)
+    st.session_state["self_note_seeded"] = False
 
 
 def reset_everything() -> None:
@@ -322,6 +327,7 @@ def reset_everything() -> None:
     data["roles"] = {}
     data["chats"] = {}
     store.save(data)
+    st.session_state["self_note_seeded"] = False
 
 
 def forget_memory(role: str, item_id: str, *, tier: str = "long") -> bool:
@@ -360,6 +366,171 @@ def forget_memory(role: str, item_id: str, *, tier: str = "long") -> bool:
 
 
 # ---------------------------------------------------------------------------
+# 五层记忆：L0 原文库 / L2 纠正 / L4 自我认知
+# ---------------------------------------------------------------------------
+
+_SENTENCE_SPLIT = re.compile(r"(?<=[。！？；!?;\n])")
+
+
+def _split_sentences(text: str) -> list[str]:
+    """把一段话切成句子，用于「按分句最大相似度」打分。"""
+    pieces = [piece.strip() for piece in _SENTENCE_SPLIT.split(text or "") if piece and piece.strip()]
+    return pieces or [str(text or "").strip()]
+
+
+def _ts_label(value: Any) -> str:
+    """毫秒时间戳 → "11-04 02:10"；非法值返回空串。"""
+    try:
+        return time.strftime("%m-%d %H:%M", time.localtime(float(value) / 1000.0))
+    except (TypeError, ValueError, OSError):
+        return ""
+
+
+def search_archive(role: str, query: str, *, limit: int = cfg.ARCHIVE_TOP_K) -> list[dict[str, Any]]:
+    """L0 原文库检索：在全部历史原文里找跟 ``query`` 最像的几句话。
+
+    原文库永不删除、永不改写——它是记忆的「底稿」，用来回答
+    「你到底是在哪句话里记住我的」。
+    """
+    text = (query or "").strip()
+    if not text:
+        return []
+    engine = build_engine()
+    try:
+        results = engine.search_archive(role, text, limit=limit)
+        return [dict(item) for item in results]
+    except (AttributeError, TypeError):
+        return _search_archive_locally(role, text, limit)
+
+
+def _search_archive_locally(role: str, query: str, limit: int) -> list[dict[str, Any]]:
+    """引擎还没提供 search_archive 时的等价实现（纯本地相似度）。"""
+    from memory_os import similarity
+
+    hits: list[dict[str, Any]] = []
+    for index, message in enumerate(role_thread(role)):
+        content = str(message.get("content") or "").strip()
+        if not content:
+            continue
+        score = max((float(similarity(query, piece)) for piece in _split_sentences(content)), default=0.0)
+        if score <= 0.0:
+            continue
+        hits.append(
+            {
+                "id": f"chat_{index}",
+                "ts": message.get("ts") or 0.0,
+                "ts_label": _ts_label(message.get("ts")),
+                "sender": "user" if message.get("role") == "user" else "assistant",
+                "text": content,
+                "score": round(score, 4),
+            }
+        )
+    hits.sort(key=lambda item: item["score"], reverse=True)
+    return hits[:limit]
+
+
+def archive_stats(role: str) -> dict[str, Any]:
+    """L0 原文库规模：一共存了多少句话、从什么时候开始。"""
+    engine = build_engine()
+    try:
+        return dict(engine.archive_stats(role))
+    except (AttributeError, TypeError):
+        pass
+    thread = role_thread(role)
+    stamps = [float(message.get("ts") or 0.0) for message in thread]
+    stamps = [stamp for stamp in stamps if stamp > 0]
+    return {
+        "messages": len(thread),
+        "user_messages": sum(1 for message in thread if message.get("role") == "user"),
+        "first_label": _ts_label(min(stamps)) if stamps else "",
+        "last_label": _ts_label(max(stamps)) if stamps else "",
+    }
+
+
+def self_notes(role: str, *, limit: int = cfg.SELF_NOTE_INJECT_MAX) -> list[dict[str, Any]]:
+    """L4 自我认知：它对自己的叙述（最新 ``limit`` 条）。"""
+    engine = build_engine()
+    try:
+        return [dict(item) for item in engine.self_notes(role, limit=limit)]
+    except (AttributeError, TypeError):
+        pass
+    data = get_store().load()
+    role_data = (data.get("roles") or {}).get(role) or {}
+    raw = role_data.get("self_notes") or []
+    notes = []
+    for item in raw[-limit:]:
+        if not isinstance(item, dict):
+            continue
+        notes.append(
+            {
+                "id": str(item.get("id") or ""),
+                "content": str(item.get("content") or ""),
+                "note_type": str(item.get("note_type") or "成长"),
+                "created_label": _ts_label(item.get("created_at")),
+                "mention_count": int(item.get("mention_count", 1) or 1),
+            }
+        )
+    return notes
+
+
+def self_note_pending(role: str) -> bool:
+    """L4 是否该在本轮注入：只在新会话首轮（或切换角色后首轮）。"""
+    if st.session_state.get("self_note_seeded"):
+        return False
+    try:
+        stats = build_engine().stats(role)
+    except Exception:  # 老版本引擎没有 stats 时按「不注入」处理
+        return False
+    return int(stats.get("turns", 0) or 0) >= cfg.CONSOLIDATE_EVERY_TURNS
+
+
+def correct_fact(role: str, fact_id: str, new_content: str, *, category: Optional[str] = None) -> bool:
+    """L2 记忆纠正：用户亲手改一条事实。
+
+    做法是「新增一条高置信事实 + 把旧事实标为被取代」，而不是原地覆盖——
+    这样旧版本仍在文件里留档，审计时能看出「它以前记错过什么」。
+    """
+    content = (new_content or "").strip()
+    target = str(fact_id or "")
+    if not content or not target:
+        return False
+    store = get_store()
+    data = store.load()
+    roles = data.get("roles") or {}
+    role_data = roles.get(role)
+    if not isinstance(role_data, dict):
+        return False
+    facts = role_data.get("facts") or []
+    old = next((item for item in facts if isinstance(item, dict) and str(item.get("id")) == target), None)
+    if not isinstance(old, dict):
+        return False
+
+    now = time.time() * 1000
+    new_fact = {
+        "id": f"fact_{uuid.uuid4().hex[:10]}",
+        "content": content[:160],
+        "category": category or str(old.get("category") or "近况"),
+        "confidence": cfg.CORRECTION_CONFIDENCE,
+        "evidence_count": int(old.get("evidence_count", 1) or 1) + 1,
+        "first_seen": old.get("first_seen") or now,
+        "last_confirmed": now,
+        "scope": str(old.get("scope") or "private"),
+        "superseded_by": None,
+        "recall_count": 0,
+        "base_strength": 1.0,
+        "archived": False,
+        "origin": "user_correction",
+    }
+    old["superseded_by"] = new_fact["id"]
+    facts.append(new_fact)
+    role_data["facts"] = facts
+    roles[role] = role_data
+    data["roles"] = roles
+    store.save(data)
+    return True
+
+
+# ---------------------------------------------------------------------------
 # 单轮对话
 # ---------------------------------------------------------------------------
 
@@ -375,8 +546,26 @@ def chat_once(role_name: str, user_text: str) -> dict[str, Any]:
 
     # 用户情绪先验：本地关键词判定，既服务检索门控，也用于气泡配色
     est_emotion = demo.detect_emotion(user_text)
-    bundle = engine.retrieve(role_name, user_text, est_emotion, tiers=enabled_tiers())
-    memory_block = engine.build_memory_block(bundle)
+    # L4 自我认知只在会话首轮注入：每轮都灌就变成「别人每隔十秒告诉你你是谁」
+    include_self = self_note_pending(role_name)
+    try:
+        bundle = engine.retrieve(
+            role_name, user_text, est_emotion, tiers=enabled_tiers(), include_self=include_self
+        )
+    except TypeError as exc:  # 引擎尚未支持 include_self 时退回三层检索
+        if "include_self" not in str(exc):
+            raise
+        bundle = engine.retrieve(role_name, user_text, est_emotion, tiers=enabled_tiers())
+        include_self = False
+    try:
+        memory_block = engine.build_memory_block(bundle, include_self=include_self)
+    except TypeError as exc:
+        if "include_self" not in str(exc):
+            raise
+        memory_block = engine.build_memory_block(bundle)
+        include_self = False
+    if include_self:
+        st.session_state["self_note_seeded"] = True
 
     relationship = getattr(bundle, "relationship", None)
     intimacy = float(getattr(relationship, "intimacy", 0.0) or 0.0)
@@ -427,6 +616,7 @@ def chat_once(role_name: str, user_text: str) -> dict[str, Any]:
         "system_prompt": system_prompt,
         "consolidation": consolidation,
         "notes": notes,
+        "self_note_used": include_self,
     }
 
 

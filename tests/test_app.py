@@ -1,7 +1,7 @@
 """app.py 的端到端测试：用 streamlit 官方 AppTest 真跑一遍界面脚本（离线演示模式，不联网）。
 
-覆盖：首次启动无异常 → 连聊 4 轮触发记忆固化 → 右栏三层/Trace/关系面板有内容 →
-清空当前角色记忆后回到空状态。
+覆盖：首次启动无异常 → 连聊 4 轮触发记忆固化 → 切到记忆舱/实验室视图能看到五层记忆 →
+原文库检索能回溯到具体那句话 → 记忆可纠正 → 清空当前角色记忆后回到空状态。
 """
 
 from __future__ import annotations
@@ -17,17 +17,20 @@ TURNS = (
     "我妈最近住院了，我有点撑不住。",
     "我还喜欢下雨天，安静。",
 )
+VIEW_MEMORY = "🧠 记忆舱"
+VIEW_LAB = "🧪 实验室"
 
 
 @pytest.fixture()
 def app(tmp_path, monkeypatch):
-    """把记忆文件与角色文件指到临时目录，避免污染真实 data/。"""
+    """把记忆文件、角色文件、快照目录都指到临时目录，避免污染真实 data/。"""
     import streamlit as st
 
     monkeypatch.setenv("EMO_DEMO_MODE", "1")
     monkeypatch.setattr(cfg, "MEMORY_FILE", tmp_path / "memory.json", raising=False)
     monkeypatch.setattr(cfg, "ROLE_FILE", tmp_path / "roles.json", raising=False)
     monkeypatch.setattr(cfg, "CUSTOM_ROLES_FILE", tmp_path / "roles.json", raising=False)
+    monkeypatch.setattr(cfg, "ARCHIVE_DIR", tmp_path / "archive", raising=False)
     st.cache_resource.clear()
 
     instance = AppTest.from_file("app.py", default_timeout=120)
@@ -42,14 +45,35 @@ def _say(instance: AppTest, text: str) -> AppTest:
     return instance
 
 
+def _goto(instance: AppTest, view: str) -> AppTest:
+    """切到指定视图（对话 / 记忆舱 / 实验室）。"""
+    instance.radio[0].set_value(view).run()
+    assert not instance.exception, instance.exception
+    return instance
+
+
+def _markdown(instance: AppTest) -> str:
+    return "\n".join(markdown.value for markdown in instance.markdown)
+
+
 def test_boot_renders_shell(app):
     assert not app.exception
     assert app.title, "主标题应该渲染出来"
     assert any("EmoMem" in title.value for title in app.title)
-    assert len(app.tabs) >= 4, "记忆舱应该有四个 tab"
+    assert app.chat_input, "对话页应该有输入框"
     sidebar_text = " ".join(item.value for item in [*app.sidebar.markdown, *app.sidebar.warning, *app.sidebar.caption])
     assert "演示" in sidebar_text or "API" in sidebar_text
     assert app.session_state["role"]
+
+
+def test_views_switch_and_memory_cabin_has_five_layers(app):
+    _goto(app, VIEW_MEMORY)
+    assert len(app.tabs) >= 7, "记忆舱应该有五层 + 关系档案等 tab"
+    labels = [tab.label for tab in app.tabs]
+    for expected in ("五层总览", "L0 原文库", "L1 会话层", "L2 长期事实", "L3 固化快照", "L4 自我认知"):
+        assert any(expected in label for label in labels), f"缺少 {expected} 面板"
+    _goto(app, VIEW_LAB)
+    assert len(app.tabs) >= 3, "实验室应该有 Trace / 消融 / 体检"
 
 
 def test_four_turns_write_memory_and_panels(app):
@@ -61,19 +85,56 @@ def test_four_turns_write_memory_and_panels(app):
     assert last_turn["memory_block"]
     assert "reply" in last_turn["system_prompt"]
 
-    joined = "\n".join(markdown.value for markdown in app.markdown)
-    assert "记忆舱" in joined
-    assert "短期" in joined
+    _goto(app, VIEW_MEMORY)
+    joined = _markdown(app)
+    assert "L0 原文库" in joined
     assert "小林" in joined, "用户自报的名字应该出现在记忆面板里"
     assert "长期" in joined or "事实" in joined
+
+
+def test_archive_search_finds_the_original_sentence(app):
+    from ui import state
+
+    for text in TURNS:
+        _say(app, text)
+
+    role = app.session_state["role"]
+    hits = state.search_archive(role, "面试", limit=5)
+    assert hits, "原文库应该能检索到说过的话"
+    assert any("面试" in hit["text"] for hit in hits[:3])
+    assert all(hit.get("ts_label") for hit in hits), "每条原文都要带时间戳"
+
+    stats = state.archive_stats(role)
+    assert stats["messages"] >= len(TURNS)
+    assert stats["user_messages"] >= len(TURNS)
 
 
 def test_chat_history_is_persisted_per_role(app):
     _say(app, "我最近加班到很晚，有点撑不住")
     threads = [block for block in app.get("chat_message")]
     assert len(threads) >= 2, "至少应该有开场白 + 一轮问答的气泡"
-    joined = "\n".join(markdown.value for markdown in app.markdown)
-    assert "加班" in joined
+    assert "加班" in _markdown(app)
+
+
+def test_correct_fact_supersedes_old_one(app):
+    """记忆可纠正：用户改一条事实 → 新增高置信事实，旧事实进审计。"""
+    from ui import state
+
+    for text in TURNS:
+        _say(app, text)
+    role = app.session_state["role"]
+    facts = state.build_engine().snapshot_for_ui(role)["long"]["items"]
+    assert facts, "四轮对话后应该沉淀出事实"
+    victim = facts[0]["id"]
+
+    assert state.correct_fact(role, victim, "用户叫小林，住在南方") is True
+    after = state.build_engine().snapshot_for_ui(role)["long"]["items"]
+    corrected = [item for item in after if item["content"] == "用户叫小林，住在南方"]
+    assert corrected, "纠正后应该出现新事实"
+    assert corrected[0]["confidence"] >= cfg.CORRECTION_CONFIDENCE
+    old = [item for item in after if item["id"] == victim]
+    assert old and old[0]["superseded_by"] == corrected[0]["id"], "旧事实应被标记为已被取代"
+    assert state.correct_fact(role, "fact_does_not_exist", "随便") is False
 
 
 def test_reset_current_role_returns_to_empty(app):
@@ -84,8 +145,8 @@ def test_reset_current_role_returns_to_empty(app):
     reset_button.click().run()
     assert not app.exception
     assert app.session_state["last_turn"] is None
-    joined = "\n".join(markdown.value for markdown in app.markdown)
-    assert "小林" not in joined, "清空后不应该还留着上一轮的记忆"
+    _goto(app, VIEW_MEMORY)
+    assert "小林" not in _markdown(app), "清空后不应该还留着上一轮的记忆"
 
 
 def test_forget_memory_deletes_single_item(app):
@@ -96,8 +157,6 @@ def test_forget_memory_deletes_single_item(app):
         _say(app, text)
 
     role = app.session_state["role"]
-    assert any("忘掉" in button.label for button in app.button), "长期/中期面板应该提供逐条删除"
-
     engine = state.build_engine()
     facts = engine.snapshot_for_ui(role)["long"]["items"]
     assert facts, "四轮对话后应该沉淀出事实"
@@ -111,6 +170,7 @@ def test_forget_memory_deletes_single_item(app):
     assert state.forget_memory(role, "fact_does_not_exist", tier="long") is False
 
     # 再走一次真实按钮点击，确认界面链路（按钮 → 删除 → rerun）没有异常
+    _goto(app, VIEW_MEMORY)
     forget_button = next(
         button for button in app.button if button.label.strip().endswith("忘掉") and "这段" not in button.label
     )

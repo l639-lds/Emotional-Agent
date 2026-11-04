@@ -19,6 +19,10 @@ DATA_DIR = APP_DIR / "data"
 DOCS_DIR = APP_DIR / "docs"
 MEMORY_FILE = DATA_DIR / "memory.json"
 CUSTOM_ROLES_FILE = DATA_DIR / "custom_roles.json"
+ARCHIVE_DIR = DATA_DIR / "archive"   # L3 固化快照落盘目录（data/archive/<角色>/<id>.json）
+
+# 存储版本：v4 在 v3 基础上加了 L3 快照索引与 L4 自我认知
+MEMORY_VERSION = 4
 
 # ---------------------------------------------------------------------------
 # 模型
@@ -118,6 +122,17 @@ TIER_LABELS = {"short": "短期·工作记忆", "mid": "中期·情景记忆", "
 ALL_TIERS = frozenset({"short", "mid", "long"})
 
 # ---------------------------------------------------------------------------
+# 五层记忆扩展（L0 原文库 / L3 固化快照 / L4 自我认知）
+# ---------------------------------------------------------------------------
+
+ARCHIVE_TOP_K = 5              # L0 原文库检索返回条数
+SELF_NOTE_MAX = 40             # L4 自我认知最多保留多少条
+SELF_NOTE_MERGE_SIM = 0.80     # 相似度高于此值视为同一条自我叙述（只刷新时间/次数）
+SELF_NOTE_INJECT_MAX = 3       # 注入 Prompt 时最多带几条（只在会话首轮）
+SNAPSHOT_MAX = 30              # L3 快照索引最多保留多少条
+CORRECTION_CONFIDENCE = 0.90   # 用户亲手纠正的事实，置信度取高值
+
+# ---------------------------------------------------------------------------
 # 人设编译器（Persona Forge）
 # ---------------------------------------------------------------------------
 
@@ -175,3 +190,10 @@ class MemoryConfig:
     mood_gate: bool = True
     conflict_resolution: bool = True
     auto_consolidate: bool = True
+    # 五层记忆扩展（L0 原文库 / L3 快照 / L4 自我认知）
+    archive_top_k: int = ARCHIVE_TOP_K
+    self_note_max: int = SELF_NOTE_MAX
+    self_note_merge_sim: float = SELF_NOTE_MERGE_SIM
+    self_note_inject_max: int = SELF_NOTE_INJECT_MAX
+    snapshot_max: int = SNAPSHOT_MAX
+    correction_confidence: float = CORRECTION_CONFIDENCE

@@ -288,6 +288,48 @@ def _episode_from_turns(turns: list[dict[str, Any]], fallback_summary: str = "")
     }
 
 
+# L4 自我认知的模板：(note_type, 句子模板)。content 里有 {topic} / {nick} 两个占位。
+_SELF_NOTE_TEMPLATES: dict[str, str] = {
+    "关系": "我注意到，叫ta「{nick}」的时候，我不再像在演一个人设了。",
+    "情绪": "ta说「{topic}」的时候声音是低下去的。我没有急着讲道理，这一点我记住了。",
+    "表达": "聊到「{topic}」，我学会先问一句「然后呢」，而不是马上给建议。",
+    "成长": "我好像慢慢知道，「{topic}」这件事对ta来说不是小事。",
+}
+
+
+def _self_note_from_turns(
+    turns: list[dict[str, Any]],
+    episode: dict[str, Any],
+    nickname: str | None = None,
+) -> dict[str, Any] | None:
+    """从一轮固化里捏一条「它对自己的叙述」（演示模式，确定性）。
+
+    L4 记的不是用户，而是角色自己：这次对话让"它"对自己的说话方式/关系
+    有了什么新的认识。演示模式没有真实模型，所以按情绪与话题挑模板。
+    """
+    user_texts = [str(t.get("content", "")) for t in turns if t.get("role") == "user"]
+    if not user_texts:
+        return None
+    joined = " ".join(user_texts)
+    emotion = detect_emotion(joined)
+    topics = [str(topic) for topic in (episode.get("topics") or []) if topic and topic != "日常"]
+    topic = topics[0] if topics else (user_texts[-1][:8] or "这些事")
+
+    if nickname:
+        note_type = "关系"
+        content = _SELF_NOTE_TEMPLATES["关系"].format(topic=topic, nick=nickname)
+    elif emotion in NEGATIVE_EMOTIONS:
+        note_type = "情绪"
+        content = _SELF_NOTE_TEMPLATES["情绪"].format(topic=topic, nick="")
+    elif len(topics) >= 2:
+        note_type = "表达"
+        content = _SELF_NOTE_TEMPLATES["表达"].format(topic=topic, nick="")
+    else:
+        note_type = "成长"
+        content = _SELF_NOTE_TEMPLATES["成长"].format(topic=topic, nick="")
+    return {"content": content[:120], "note_type": note_type}
+
+
 # ---------------------------------------------------------------------------
 # 人设编译器（演示模式）
 # ---------------------------------------------------------------------------
@@ -544,6 +586,7 @@ def fake_json(
             episode = _episode_from_turns(turns, fallback_summary=context.get("fallback_summary", ""))
             payload["episode"] = episode
             payload["relationship"]["themes"] = list(episode.get("topics") or [])[:3]
+            payload["self_note"] = _self_note_from_turns(turns, episode, context.get("nickname"))
         return payload
 
     if purpose == "proactive":

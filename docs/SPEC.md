@@ -5,19 +5,20 @@
 ## 0. 项目定位
 
 原有项目：Streamlit + DeepSeek 的情感陪伴 Agent（单文件 `app.py`，876 行，JSON 存储，v2 schema）。
-本次改造目标：把「单一 `memories: list[str]`」升级为**情感感知的三层记忆系统 EmoMem**，并把角色生成升级为**人设编译器 Persona Forge**。
+本次改造目标：把「单一 `memories: list[str]`」升级为**情感感知的五层记忆系统 EmoMem**（v4：L0 原文库 / L1 会话层 / L2 长期事实 / L3 固化快照 / L4 自我认知），并把角色生成升级为**人设编译器 Persona Forge**。
 
 对外卖点（海报/答辩用同一套表述，措辞不要各写一套）：
 
 | # | 创新点 | 一句话 |
 |---|---|---|
-| 1 | 三层记忆 + 记忆固化 | 工作记忆（逐轮）→ 情景记忆（LLM 压缩成 Episode）→ 语义画像（长期 Fact），每 4 轮自动"睡眠整理" |
-| 2 | 情绪加权检索 + 防翻旧账 | 每条记忆带效价 valence/唤醒度 arousal，检索分 = 相似度×重要性×时间衰减×情绪显著性；用户情绪负面时抑制未被提及的高唤醒负性记忆 |
-| 3 | 记忆冲突消解 | 新旧事实矛盾时旧条目 `superseded_by` 标记作废（保留审计），置信度随证据数演化 |
-| 4 | 可解释记忆 Trace | 每轮记录注入了哪些记忆、各项分值构成与理由，界面可展开查看，附「本轮未采用的记忆及原因」 |
-| 5 | 关系档案驱动人格漂移 | intimacy/trust/stage/称呼演化/共同梗，阶段反向调节语气（陌生克制 → 亲密可调侃撒娇），人设不再静态 |
-| 6 | 未闭环事件 + 主动关怀 | 从对话抽取"待跟进事项"（面试/体检/约定），下次主动追问；另有消融开关（现场对比关掉某层记忆的回复差异） |
-| 7 | 人设编译器 Persona Forge | 一句描述 → 结构化人设卡（语音指纹/情绪反应表/关系弧/边界）→ 自评打分 → 定向重写 → 3 问人设体检 |
+| 1 | 五层记忆结构 | L0 原文库（永不删可检索）→ L1 会话层（最近 20 + 摘要 + Episode）→ L2 长期事实 → L3 固化快照（每次整理留档可回溯）→ L4 自我认知（它对自己的叙述）；「前三层记的是你，L4 记的是它」 |
+| 2 | 记忆固化 + 每 4 轮"睡眠整理" | 一次调用同时产出情景片段、事实、未闭环事件、称呼、关系增量、一条自我叙述，并写一份快照 |
+| 3 | 情绪加权检索 + 防翻旧账 | 每条记忆带效价 valence/唤醒度 arousal，检索分 = 相似度×重要性×时间衰减×情绪显著性；用户情绪负面时抑制未被提及的高唤醒负性记忆 |
+| 4 | 记忆冲突消解 | 新旧事实矛盾时旧条目 `superseded_by` 标记作废（保留审计），置信度随证据数演化 |
+| 5 | 可解释 Trace + 记忆主权 | 每轮记录注入了哪些记忆、分值构成与理由、未采用的记忆及原因；每条记忆还能「忘掉」或「改正」（改正走 `superseded_by` 留档） |
+| 6 | 关系档案驱动人格漂移 | intimacy/trust/stage/称呼演化/共同梗，阶段反向调节语气（陌生克制 → 亲密可调侃撒娇），人设不再静态 |
+| 7 | 未闭环事件 + 主动关怀 | 从对话抽取"待跟进事项"（面试/体检/约定），下次主动追问；另有消融开关（现场对比关掉某层记忆的回复差异） |
+| 8 | 人设编译器 Persona Forge | 一句描述 → 结构化人设卡（语音指纹/情绪反应表/关系弧/边界）→ 自评打分 → 定向重写 → 3 问人设体检 |
 
 ## 1. 目录与文件归属（写作用域，禁止越界）
 
@@ -34,6 +35,7 @@ memory_os/textsim.py        mem-core    纯 Python 字符 n-gram TF-IDF 余弦�
 memory_os/retrieval.py      mem-core    打分、选层、mood gate、Trace 组装
 memory_os/decay.py          mem-core    遗忘曲线 / 强化 / 归档
 memory_os/consolidate.py    mem-core    固化：Episode 生成、Fact 合并/冲突、OpenLoop、关系更新
+memory_os/layers.py         mem-core    L0 原文检索 / L3 快照落盘 / L4 自我认知的纯函数层（v4 新增）
 memory_os/engine.py         mem-core    MemoryEngine 门面（写路径 + 读路径）
 memory_os/prompts.py        mem-core    抽取/固化/主动关怀的 Prompt 模板
 tests/test_memory_os.py     mem-core    pytest，全部离线、确定性
@@ -50,7 +52,7 @@ docs/poster/*               poster     A2 海报（html/pdf/png）
 docs/答辩稿.md / .docx        poster     一页答辩稿
 ```
 
-## 2. 数据 Schema（`data/memory.json` v3）
+## 2. 数据 Schema（`data/memory.json` v3 基础字段；v4 追加字段见 §8.1）
 
 顶层：`{"version": 3, "chats": {...}, "roles": {角色名: RoleMemory}, "shared_facts": [Fact], "meta": {...}}`
 
@@ -370,3 +372,123 @@ JSON 协议升级（`render_protocol_rules`）：在保留 `reply/emotion/memory
 7. 中文注释/文案；变量名英文；单文件建议 ≤ 450 行，超了拆。
 8. 不改动 `app.py`、`core/*`（除 Lead 授权）；不修改他人文件。写完自己跑 `python -m pytest tests/ -q`。
 9. 复用原 `app.py` 里已验证的容错逻辑（JSON 提取、重试、脱敏），不要另起一套。
+
+## 8. 五层记忆扩展（v4，本轮新增；对外口径见 §8.0）
+
+### 8.0 五层定义（海报 / README / 答辩统一用这套说法，不得自创）
+
+| 层 | 名字 | 内容 | 生命周期与注入策略 |
+|---|---|---|---|
+| L0 | 原文库 | 全量对话原文（`data["chats"][角色]`），永不删除，可按关键词检索 | 不注入；需要时用 `search_archive` 检索，带时间戳与出处 |
+| L1 | 会话层 | 最近 20 轮原文 + 滚动摘要 + 每 4 轮固化的 Episode（情景记忆） | 每轮注入最近 8 条 + Top-K Episode |
+| L2 | 长期事实 | 8 类事实，带置信度 / 证据数 / 类别权重 / 衰减 / 归档 | 每轮按分数注入，pinned 与门控见 §3.1 |
+| L3 | 固化快照 | 每次固化的产物落盘（`data/archive/<角色>/<id>.json`）+ 索引，可回溯历史版本 | 不注入；UI 可查看 |
+| L4 | 自我认知 | `selfNote`：它对自己的叙述（"我好像越来越会等你说完再回了"） | **只在新会话首轮 / 切换角色后首轮注入**，其余轮次不注入 |
+
+> 设计理由（写进 README/答辩）：前三层记的都是"你"，L4 记的是"它"。前者是资料，后者才是性格的连续性。每轮都灌 = "别人每隔十秒告诉你你是谁"，那不是成长，是洗脑。
+
+### 8.1 Schema 追加（`memory_os/schema.py`）
+
+```python
+@dataclass
+class SelfNote:            # L4
+    id: str = ""           # f"self_{uuid4().hex[:10]}"
+    content: str = ""      # 一句话，≤120 字
+    note_type: str = "成长"  # 成长 | 关系 | 表达 | 情绪
+    created_at: float = 0.0
+    updated_at: float = 0.0
+    mention_count: int = 1
+
+@dataclass
+class MemorySnapshot:      # L3 索引项
+    id: str = ""           # f"snap_{uuid4().hex[:10]}"
+    created_at: float = 0.0
+    label: str = ""        # 中文可读时间，如 11-04 03:12
+    episode_id: str = ""
+    episode_title: str = ""
+    facts_added: int = 0
+    facts_updated: int = 0
+    self_note: str = ""
+    path: str = ""         # 相对项目根，如 data/archive/温柔老父亲/snap_xxx.json
+```
+
+`RoleMemory` 追加两个字段：`self_notes: list[SelfNote]`、`snapshots: list[MemorySnapshot]`；
+上限 `SELF_NOTE_MAX=40`、`SNAPSHOT_MAX=30`（超出丢最旧）；`version` 升到 **4**，`load` 必须兼容 3（缺两字段用空列表）。
+
+### 8.2 `consolidate` 追加（L3 + L4 的写入点）
+
+1. LLM JSON 追加可选字段 `"self_note": {"content": "...", "note_type": "成长"} | null`；`prompts.heuristic_extract()` 兜底时返回 `None`。
+2. `self_note.content` 与已有 selfNote 相似度 `>= SELF_NOTE_MERGE_SIM(0.8)` → `mention_count += 1`、`updated_at = now`（不新增）；否则新增。截断到 120 字、上限 40 条。
+3. 每次**真正发生固化**（不论 LLM 成功或正则兜底）都写一份快照文件到 `data/archive/<角色>/<snapshot_id>.json`，内容 `{id, created_at, episode, facts_added[], facts_updated[], self_note, notes}`；写盘失败只 `notes.append("快照写入失败：…")`，**绝不影响主流程**。索引写入 `RoleMemory.snapshots`。
+
+### 8.3 `engine` 新增 API（`memory_os/__init__.py` 一并导出需要的类型）
+
+```python
+search_archive(role, query, *, limit=5, now=None) -> list[dict]
+# L0：对 data["chats"][role] 全量消息做 TF-IDF 检索（textsim.similarity，按分句最大余弦）
+# 返回 [{"id","ts","ts_label","sender":"user|assistant","text","score"}]，按 score 降序
+
+archive_stats(role) -> dict
+# {"messages": int, "user_messages": int, "first_label": str, "last_label": str}
+
+self_notes(role, *, limit=3) -> list[dict]
+# [{"id","content","note_type","created_label","mention_count"}]
+
+correct_fact(role, fact_id, new_content, *, category=None, now=None) -> dict | None
+# L2 纠正：新建 Fact(confidence=CORRECTION_CONFIDENCE(0.9), evidence_count=旧+1,
+#   origin="user_correction", first_seen=now, last_confirmed=now)；
+#   旧 fact.superseded_by = 新 id（保留留档）；返回新 fact 的 snapshot 形 dict；找不到 fact_id 返回 None
+
+list_snapshots(role, *, limit=5) -> list[dict]
+# [{"id","label","episode_title","facts_added","facts_updated","self_note"}]，按时间倒序
+
+build_memory_block(bundle, *, include_self=False) -> str
+# include_self=True 时在末尾追加一节：
+# 【它的自我叙述】\n- …（最多 3 条，绝不出现 "None"）
+```
+
+`retrieve(role, query, emotion="平静", *, tiers=None, include_self=False, now=None)` 同理把 `include_self` 传到 `MemoryBundle`（字段名 `include_self: bool = False`，`self_notes: list[dict]`）。
+
+### 8.4 `snapshot_for_ui` 追加键（只增不改）
+
+```python
+"self":      {"items": [{"id","content","note_type","created_label","mention_count"}...], "count": int},
+"archive":   {"messages": int, "first_label": str, "last_label": str},
+"snapshots": {"items": [{"id","label","episode_title","facts_added","facts_updated"}...], "count": int},
+```
+
+### 8.5 UI 注入策略（`ui/state.py` 负责）
+
+- `st.session_state["self_note_seeded"]` 默认 `False`；每轮 `chat_once` 读一次：
+  `include_self = not seeded and 已有固化过（role.turn_counter >= CONSOLIDATE_EVERY_TURNS）`，
+  命中则 `retrieve(..., include_self=True)` 并在返回 dict 里带 `self_note_used=True`，随后置 `True`。
+- 切换角色 / 清空记忆时重置为 `False`。
+- `build_memory_block(bundle, include_self=bundle.include_self)` 由 `ui/state.py` 调用。
+
+---
+
+## 9. 界面契约（v4，三视图）
+
+### 9.1 视图与归属
+
+| 视图 | 常量 | 内容 |
+|---|---|---|
+| 💬 对话 | `VIEW_CHAT` | 只放对话：气泡流（含 emotion / initiative / loop_hint / memory_update 四行 caption）、失败重试、「让 TA 主动开口」（门闩：`openers and snapshot["loops"]`）、`st.chat_input` |
+| 🧠 记忆舱 | `VIEW_MEMORY` | `st.tabs(["五层总览","L0 原文库","L1 会话层","L2 长期事实","L3 固化快照","L4 自我认知","关系档案"])` |
+| 🧪 实验室 | `VIEW_LAB` | `st.tabs(["本轮 Trace","消融开关","记忆体检"])` |
+
+- 视图状态存 `st.session_state["view"]`，由 `st.radio`（`horizontal=True`, `label_visibility="collapsed"`）驱动；`ui/state.init_session()` 里 `setdefault("view", VIEW_CHAT)`。
+- 亲密/信任、三层统计、Trace、关系档案**不再**占据对话页右栏；对话页做满宽。
+- 顶部标题行右侧固定一行五层计数：`L0 原文 N 条 · L1 会话 N 条 · L2 事实 N 条 · L3 快照 N 份 · L4 自述 N 条`，全部用 `(snapshot.get(key) or {}).get(...)` 兜底，缺键显示 0。
+
+### 9.2 记忆主权（可查 / 可删 / 可改）
+
+| 能力 | 实现位置 | 契约 |
+|---|---|---|
+| 查 | `ui/panels.render_archive` → `ui/state.search_archive(role, query)` | 返回 `[{id, ts, ts_label, sender, text, score}]`；优先用 `engine.search_archive`，缺失时回落本地 `memory_os.similarity` + 分句最大余弦 |
+| 删 | `ui/panels.render_mid/render_long` → `ui/state.forget_memory(role, item_id, *, tier)` | `tier ∈ {mid, long, shared}`；真删单条并 `store.save()`；返回 `bool` |
+| 改 | `ui/panels.correct_dialog` → `ui/state.correct_fact(role, fact_id, new_content, *, category=None)` | 新 Fact `id=fact_<uuid10>`、`confidence=cfg.CORRECTION_CONFIDENCE(0.9)`、`evidence_count=旧+1`、`origin="user_correction"`；旧 fact `superseded_by=新id` |
+
+- `correct_fact` 在 `ui/state.py` 内直接读改写 `store`，**不依赖** `engine.correct_fact`（两层实现互不阻塞，行为一致）。
+- 删除/纠正后必须 `state.flash(...)` + `st.rerun()`；按钮 key 分别为 `forget_{tier}_{id}` / `correct_{tier}_{id}`（避免重复 key）。
+- 清空记忆（`reset_role_memory` / `reset_everything`）必须同时把 `st.session_state["self_note_seeded"]` 置回 `False`。

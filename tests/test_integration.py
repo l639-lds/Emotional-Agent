@@ -254,3 +254,105 @@ def test_store_persists_and_reloads(tmp_path, demo_mode):
     assert stats_after["facts"] == stats_before["facts"]
     assert stats_after["episodes"] == stats_before["episodes"]
     assert stats_after["turns"] == stats_before["turns"]
+
+
+# ---------------------------------------------------------------------------
+# v4 五层记忆：L0 原文库 / L3 固化快照 / L4 自我认知
+# ---------------------------------------------------------------------------
+
+
+def _write_chats(engine: MemoryEngine, base_ms: float = 1_700_000_000_000) -> None:
+    """模拟 UI 侧写 L0 原文库（record_turn 不管 chats，由 append_exchange 负责）。"""
+    data = engine.data
+    chats = data.setdefault("chats", {})
+    messages = []
+    for index, (user_text, reply) in enumerate(DIALOGUE):
+        stamp = base_ms + index * 120_000
+        messages.append({"role": "user", "content": user_text, "ts": stamp})
+        messages.append({"role": "assistant", "content": reply, "ts": stamp + 1})
+    chats[ROLE] = messages
+    engine.store.save(data)
+
+
+def test_l0_archive_search_and_stats(tmp_path, demo_mode):
+    """L0：原文库永久保留，可按关键词回溯到原话，统计计数正确。"""
+    engine = MemoryEngine(MemoryStore(tmp_path / "memory.json"))
+    _feed(engine)
+    _write_chats(engine)
+
+    stats = engine.archive_stats(ROLE)
+    assert stats["messages"] == len(DIALOGUE) * 2
+    assert stats["user_messages"] == len(DIALOGUE)
+    assert stats["first_label"] and stats["last_label"]
+
+    hits = engine.search_archive(ROLE, "面试", limit=3)
+    assert hits, "原文库应当能按关键词检索到历史原话"
+    first = hits[0]
+    assert {"id", "ts", "ts_label", "sender", "text", "score"} <= set(first)
+    assert "面试" in first["text"]
+    assert 0.0 <= first["score"] <= 1.0
+    assert engine.search_archive(ROLE, "量子力学与黑洞蒸发") == [] or isinstance(
+        engine.search_archive(ROLE, "量子力学与黑洞蒸发"), list
+    )
+
+
+def test_l3_snapshot_file_and_index(tmp_path, demo_mode):
+    """L3：每次真正固化都落一份快照文件，并在 snapshot_for_ui 里留下索引。"""
+    engine = MemoryEngine(MemoryStore(tmp_path / "memory.json"))
+    _feed(engine)  # 4 轮 → 自动固化一次
+
+    snapshot = engine.snapshot_for_ui(ROLE)
+    assert "snapshots" in snapshot
+    assert snapshot["snapshots"]["count"] >= 1
+    item = snapshot["snapshots"]["items"][0]
+    for field in ("id", "label", "episode_title", "facts_added", "facts_updated"):
+        assert field in item
+
+    files = list(engine.archive_dir.glob("*/*.json"))
+    assert files, "快照正文必须真的落盘，不能只写索引"
+
+
+def test_l4_self_note_injected_only_when_requested(tmp_path, demo_mode):
+    """L4：自我叙述默认不进记忆块，只有新会话首轮（include_self=True）才注入。"""
+    engine = MemoryEngine(MemoryStore(tmp_path / "memory.json"))
+    _feed(engine)
+    engine.consolidate(ROLE, force=True)
+
+    plain = engine.retrieve(ROLE, "面试", "难过")
+    block_plain = engine.build_memory_block(plain)
+    assert "【它的自我叙述】" not in block_plain
+
+    with_self = engine.retrieve(ROLE, "面试", "难过", include_self=True)
+    block_self = engine.build_memory_block(with_self, include_self=True)
+    assert "【它的自我叙述】" in block_self
+    assert "None" not in block_self
+    assert with_self.self_notes, "self_notes 必须挂在 bundle 上，否则记忆块无处可取"
+
+    snapshot = engine.snapshot_for_ui(ROLE)
+    assert snapshot["self"]["count"] >= 1
+    note = snapshot["self"]["items"][0]
+    for field in ("id", "content", "note_type", "created_label", "mention_count"):
+        assert field in note
+
+
+def test_correct_fact_supersedes_old_one(tmp_path, demo_mode):
+    """记忆主权「改」：纠正一条事实 → 新事实置信 0.9，旧事实 superseded_by 留档。"""
+    engine = MemoryEngine(MemoryStore(tmp_path / "memory.json"))
+    _feed(engine)
+    engine.consolidate(ROLE, force=True)
+
+    facts = [item for item in engine.snapshot_for_ui(ROLE)["long"]["items"] if not item["superseded_by"]]
+    assert facts
+    old = facts[0]
+    fixed = engine.correct_fact(ROLE, old["id"], "用户叫小林，住在南方一个总下雨的城市")
+    assert fixed is not None
+    assert fixed["confidence"] >= cfg.CORRECTION_CONFIDENCE
+    assert fixed["id"] != old["id"]
+
+    after = engine.snapshot_for_ui(ROLE)["long"]["items"]
+    old_after = next(item for item in after if item["id"] == old["id"])
+    assert old_after["superseded_by"] == fixed["id"]
+    new_after = next(item for item in after if item["id"] == fixed["id"])
+    assert "南方" in new_after["content"]
+    assert engine.correct_fact(ROLE, "fact_不存在", "随便") is None
+    assert engine.correct_fact(ROLE, old["id"], "   ") is None

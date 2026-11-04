@@ -27,9 +27,9 @@ DOCX_PATH = ROOT / "docs" / "答辩稿.docx"
 
 FONT = "微软雅黑"
 FONT_FILE = Path("C:/Windows/Fonts/msyh.ttc")
-BODY_PT = 10.5
-SECTION_PT = 11.5
-TITLE_PT = 16.0
+BODY_PT = 10.0
+SECTION_PT = 11.0
+TITLE_PT = 15.5
 LINE_MULT = 1.0
 SPACE_AFTER_PT = 0.0
 PAGE_W_CM, PAGE_H_CM = 21.0, 29.7

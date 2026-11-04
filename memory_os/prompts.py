@@ -48,7 +48,9 @@ CONSOLIDATE_SYSTEM = """你是情感陪伴 Agent 的「记忆固化器」。你�
   "loops_close": [{"id": "已有未闭环事件的 id"} 或 {"what": "该事项原文"}],
   "nickname": "用户希望被怎么称呼；没有就写 null",
   "relationship": {"intimacy_delta": 0 到 3, "trust_delta": 0 到 2,
-                   "themes": ["反复出现的共同话题"], "inside_joke": "只有彼此懂的梗或 null"}
+                   "themes": ["反复出现的共同话题"], "inside_joke": "只有彼此懂的梗或 null"},
+  "self_note": {"content": "你对自己在这段关系里的一点变化的自述，第一人称、一句话",
+                "note_type": "成长|关系|表达|情绪"} 或 null
 }
 
 ## 硬性规则
@@ -60,7 +62,9 @@ CONSOLIDATE_SYSTEM = """你是情感陪伴 Agent 的「记忆固化器」。你�
 5. scope：身份/重要人物/长期目标/禁忌类客观信息可以写 shared，其余写 private。
 6. 未闭环事件只在**确实没有结果**时输出；用户说事情已经办完了，就写进 loops_close。
 7. 本轮对话平淡、没有信息量时：episode 照写（importance 给低分），facts 与 loops_open 给空数组。
-8. 只输出 JSON，不要输出任何其它字符。"""
+8. self_note 只在**你自己（Agent）的表达方式或关系状态确实有变化**时才写，写"我"不写"用户"，
+   最长 40 字；没有就写 null。不要复述事实。
+9. 只输出 JSON，不要输出任何其它字符。"""
 
 
 def format_turn_list(turns: list[dict[str, Any]], limit: int = 40) -> str:
@@ -219,6 +223,8 @@ def heuristic_extract(turns: list[dict[str, Any]], *,
             "themes": topics[:2],
             "inside_joke": None,
         },
+        # L4 自我认知需要"自我观察"，规则兜底不臆造，直接留空（SPEC §8.2）
+        "self_note": None,
         "_source": "heuristic",
     }
 

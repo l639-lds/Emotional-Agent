@@ -1,4 +1,4 @@
-"""三层记忆的数据类定义与 JSON 互转（v3 schema）。
+"""五层记忆的数据类定义与 JSON 互转（v4 schema）。
 
 约定：
 - 所有时间戳统一为**毫秒浮点**（与 SPEC §2 的「毫秒时间戳」一致）。
@@ -17,7 +17,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from core.config import CATEGORIES, clamp, stage_of
+from core.config import CATEGORIES, MEMORY_VERSION, clamp, stage_of
 
 # 未知分类统一归到「近况」（SPEC §2）
 FALLBACK_CATEGORY = "近况"
@@ -525,6 +525,8 @@ class MemoryBundle:
     trace: MemoryTrace = field(default_factory=MemoryTrace)
     style_directives: list[str] = field(default_factory=list)
     block: str = ""
+    include_self: bool = False
+    self_notes: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """转为可 JSON 序列化的 dict（调试/落盘用）。"""
@@ -539,6 +541,8 @@ class MemoryBundle:
             "trace": self.trace.to_dict(),
             "style_directives": list(self.style_directives),
             "block": self.block,
+            "include_self": self.include_self,
+            "self_notes": [dict(item) for item in self.self_notes],
         }
 
 
@@ -574,6 +578,106 @@ class ConsolidationResult:
 
 
 @dataclass
+class SelfNote:
+    """L4 自我认知：Agent 对自己的一段叙述（``content`` 一句话，≤120 字）。"""
+
+    id: str = ""
+    content: str = ""
+    note_type: str = "成长"
+    created_at: float = 0.0
+    updated_at: float = 0.0
+    mention_count: int = 1
+
+    def __post_init__(self) -> None:
+        self.id = _as_str(self.id) or new_id("self")
+        self.content = _as_str(self.content)[:120]
+        self.note_type = _as_str(self.note_type, "成长") or "成长"
+        self.created_at = as_ms(self.created_at) if self.created_at else now_ms()
+        self.updated_at = as_ms(self.updated_at) if self.updated_at else self.created_at
+        self.mention_count = max(1, _as_int(self.mention_count, 1))
+
+    def to_dict(self) -> dict[str, Any]:
+        """转为可 JSON 序列化的 dict。"""
+        return {
+            "id": self.id,
+            "content": self.content,
+            "note_type": self.note_type,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "mention_count": self.mention_count,
+        }
+
+    @classmethod
+    def from_dict(cls, raw: Any) -> "SelfNote":
+        """从 dict 还原；缺字段用默认值，脏数据不抛异常。"""
+        data = raw if isinstance(raw, dict) else {}
+        return cls(
+            id=data.get("id", ""),
+            content=data.get("content", ""),
+            note_type=data.get("note_type", "成长"),
+            created_at=data.get("created_at", 0.0),
+            updated_at=data.get("updated_at", 0.0),
+            mention_count=data.get("mention_count", 1),
+        )
+
+
+@dataclass
+class MemorySnapshot:
+    """L3 固化快照的索引项（快照正文另存为 ``data/archive/<角色>/<id>.json``）。"""
+
+    id: str = ""
+    created_at: float = 0.0
+    label: str = ""
+    episode_id: str = ""
+    episode_title: str = ""
+    facts_added: int = 0
+    facts_updated: int = 0
+    self_note: str = ""
+    path: str = ""
+
+    def __post_init__(self) -> None:
+        self.id = _as_str(self.id) or new_id("snap")
+        self.created_at = as_ms(self.created_at) if self.created_at else now_ms()
+        self.label = _as_str(self.label, "") or ""
+        self.episode_id = _as_str(self.episode_id)
+        self.episode_title = _as_str(self.episode_title)[:60]
+        self.facts_added = max(0, _as_int(self.facts_added, 0))
+        self.facts_updated = max(0, _as_int(self.facts_updated, 0))
+        self.self_note = _as_str(self.self_note)[:120]
+        self.path = _as_str(self.path, "")
+
+    def to_dict(self) -> dict[str, Any]:
+        """转为可 JSON 序列化的 dict。"""
+        return {
+            "id": self.id,
+            "created_at": self.created_at,
+            "label": self.label,
+            "episode_id": self.episode_id,
+            "episode_title": self.episode_title,
+            "facts_added": self.facts_added,
+            "facts_updated": self.facts_updated,
+            "self_note": self.self_note,
+            "path": self.path,
+        }
+
+    @classmethod
+    def from_dict(cls, raw: Any) -> "MemorySnapshot":
+        """从 dict 还原；缺字段用默认值，脏数据不抛异常。"""
+        data = raw if isinstance(raw, dict) else {}
+        return cls(
+            id=data.get("id", ""),
+            created_at=data.get("created_at", 0.0),
+            label=data.get("label", ""),
+            episode_id=data.get("episode_id", ""),
+            episode_title=data.get("episode_title", ""),
+            facts_added=data.get("facts_added", 0),
+            facts_updated=data.get("facts_updated", 0),
+            self_note=data.get("self_note", ""),
+            path=data.get("path", ""),
+        )
+
+
+@dataclass
 class RoleMemory:
     """单个角色的三层记忆（``roles[角色名]`` 的运行时形态）。"""
 
@@ -586,6 +690,8 @@ class RoleMemory:
     relationship: RelationshipState = field(default_factory=RelationshipState)
     last_consolidated_turn: int = 0
     turn_counter: int = 0
+    self_notes: list[SelfNote] = field(default_factory=list)
+    snapshots: list[MemorySnapshot] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """转为可 JSON 序列化的 dict（即 SPEC §2 的 RoleMemory 结构）。"""
@@ -599,16 +705,20 @@ class RoleMemory:
             "relationship": self.relationship.to_dict(),
             "last_consolidated_turn": self.last_consolidated_turn,
             "turn_counter": self.turn_counter,
+            "self_notes": [note.to_dict() for note in self.self_notes],
+            "snapshots": [snap.to_dict() for snap in self.snapshots],
         }
 
     @classmethod
     def from_dict(cls, raw: Any) -> "RoleMemory":
-        """从 dict 还原；缺字段用默认值，脏数据不抛异常。"""
+        """从 dict 还原；缺字段用默认值，脏数据不抛异常（v3 旧文件缺两层 → 空列表）。"""
         data = raw if isinstance(raw, dict) else {}
         turns_raw = data.get("turns") if isinstance(data.get("turns"), list) else []
         episodes_raw = data.get("episodes") if isinstance(data.get("episodes"), list) else []
         facts_raw = data.get("facts") if isinstance(data.get("facts"), list) else []
         loops_raw = data.get("open_loops") if isinstance(data.get("open_loops"), list) else []
+        self_raw = data.get("self_notes") if isinstance(data.get("self_notes"), list) else []
+        snaps_raw = data.get("snapshots") if isinstance(data.get("snapshots"), list) else []
         return cls(
             turns=[WorkingTurn.from_dict(item) for item in turns_raw if isinstance(item, dict)],
             working_summary=_as_str(data.get("working_summary"))[:600],
@@ -619,6 +729,10 @@ class RoleMemory:
             relationship=RelationshipState.from_dict(data.get("relationship")),
             last_consolidated_turn=max(0, _as_int(data.get("last_consolidated_turn"), 0)),
             turn_counter=max(0, _as_int(data.get("turn_counter"), 0)),
+            self_notes=[SelfNote.from_dict(item) for item in self_raw if isinstance(item, dict)],
+            snapshots=[
+                MemorySnapshot.from_dict(item) for item in snaps_raw if isinstance(item, dict)
+            ],
         )
 
 
@@ -628,8 +742,8 @@ class RoleMemory:
 
 
 def default_data() -> dict[str, Any]:
-    """v3 存储的默认结构。"""
-    return {"version": 3, "chats": {}, "roles": {}, "shared_facts": [], "meta": {}}
+    """v4 存储的默认结构（五层记忆；仍兼容读入 v2/v3 旧文件）。"""
+    return {"version": MEMORY_VERSION, "chats": {}, "roles": {}, "shared_facts": [], "meta": {}}
 
 
 def get_role_memory(data: dict[str, Any], role: str) -> RoleMemory:
@@ -668,10 +782,12 @@ __all__ = [
     "Episode",
     "Fact",
     "MemoryBundle",
+    "MemorySnapshot",
     "MemoryTrace",
     "OpenLoop",
     "RelationshipState",
     "RoleMemory",
+    "SelfNote",
     "TIMESTAMP_LABEL_KEYS",
     "TraceItem",
     "WorkingTurn",

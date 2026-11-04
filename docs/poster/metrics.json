@@ -1,5 +1,5 @@
 {
-  "compress_ratio": "65.4%",
+  "compress_ratio": "66.7%",
   "probe_hit": "5/5",
   "conflict_resolved": 1,
   "avg_strength_d0": 0.998,
@@ -7,5 +7,8 @@
   "mood_gate_hits": 5,
   "turns": 40,
   "episodes": 5,
-  "facts": 17
+  "facts": 17,
+  "self_notes": 5,
+  "snapshots": 5,
+  "archive_messages": 40
 }

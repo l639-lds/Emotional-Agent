@@ -438,7 +438,7 @@ def _episode_line(candidate: Candidate, now: float) -> str:
     episode = candidate.item
     assert isinstance(episode, Episode)
     when = format_time_label(episode.created_at, now)
-    mood = f"·{episode.valence:+.1f}" if abs(episode.valence) >= 0.3 else ""
+    mood = f"（当时情绪 {episode.valence:+.1f}）" if abs(episode.valence) >= 0.3 else ""
     return f"· {when}｜{_truncate(episode.title, 16)}：{_truncate(episode.summary, 72)}{mood}"
 
 

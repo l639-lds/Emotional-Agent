@@ -1,10 +1,10 @@
-"""记忆文件的原子读写、v2/旧格式→v3 迁移与容错。
+"""记忆文件的原子读写、v2/旧格式→v4 迁移与容错。
 
 设计要点：
 1. **原子写**：先写同目录临时文件再 ``os.replace``，避免进程被杀时留下半截 JSON；
 2. **永不崩溃**：缺文件 / 空文件 / 破损 JSON 一律回落默认结构，破损文件重命名成 ``*.bak`` 保留现场；
-3. **兼容迁移**：v2（``{"chats":..., "memories":...}``）与更早的平铺格式（``{"角色名": [msgs]}``）
-   都自动升级到 v3，并把旧 ``memories: list[str]`` 转成长期 Fact，历史不丢。
+3. **兼容迁移**：v2（``{"chats":..., "memories":...}``）、v3（三层记忆，缺 L3/L4 字段）与更早的平铺格式
+   （``{"角色名": [msgs]}``）都自动升级到 v4，并把旧 ``memories: list[str]`` 转成长期 Fact，历史不丢。
 """
 
 from __future__ import annotations
@@ -15,10 +15,12 @@ import time
 from pathlib import Path
 from typing import Any
 
+from core.config import MEMORY_VERSION
+
 from memory_os.schema import Fact, RoleMemory, default_data, now_ms
 
-# 存储版本号（SPEC §2）
-STORAGE_VERSION = 3
+# 存储版本号（SPEC §2 / §8.1）：当前 v4，读入 v2/v3 旧文件时自动迁移
+STORAGE_VERSION = MEMORY_VERSION
 
 
 def _replace_with_retry(source: Path, target: Path, attempts: int = 5) -> None:
@@ -120,7 +122,7 @@ def _seed_turns_from_chats(messages: list[dict[str, Any]], now: float, limit: in
 
 
 def normalize_data(raw: Any) -> dict[str, Any]:
-    """把任意版本/任意脏数据整理成合法的 v3 结构（不抛异常）。"""
+    """把任意版本/任意脏数据整理成合法的 v4 结构（不抛异常）。"""
     now = now_ms()
     if not isinstance(raw, dict):
         return default_data()
@@ -226,7 +228,7 @@ class MemoryStore:
 
     # -- 写 -----------------------------------------------------------------
     def save(self, data: dict) -> None:
-        """原子写入（tmp + ``os.replace``），始终写入 ``version=3``。"""
+        """原子写入（tmp + ``os.replace``），始终写入当前存储版本（v4）。"""
         payload = dict(data) if isinstance(data, dict) else default_data()
         payload["version"] = STORAGE_VERSION
         for key, value in default_data().items():

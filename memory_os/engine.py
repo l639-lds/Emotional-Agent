@@ -1,11 +1,13 @@
-"""记忆引擎：三层记忆的唯一公开门面（SPEC §3 的 API 集合）。
+"""记忆引擎：五层记忆的唯一公开门面（SPEC §3 + §8.3 的 API 集合）。
 
-写路径：``record_turn`` → ``consolidate`` → ``decay_pass``；读路径：``retrieve`` → ``build_memory_block``。
+写路径：``record_turn`` → ``consolidate`` → ``decay_pass``；读路径：``retrieve`` → ``build_memory_block``；
+L0 原文库走 ``search_archive``，L3 快照走 ``list_snapshots``，L4 自我认知走 ``self_notes``。
 所有时间都通过 ``now``（毫秒时间戳）注入，**不读系统时钟做业务判断**，因此单测可完全确定性复现。
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Callable
 
 from core.config import (
@@ -17,7 +19,7 @@ from core.config import (
     clamp,
 )
 from memory_os import decay as decay_mod
-from memory_os import prompts, retrieval, textsim
+from memory_os import layers, prompts, retrieval, textsim
 from memory_os.consolidate import (
     JsonCaller,
     call_llm_json,
@@ -59,6 +61,28 @@ def _clip(text: Any, limit: int = 80) -> str | None:
         clean = " ".join(text.split())
         return clean[:limit] if clean else None
     return None
+
+
+def fact_snapshot_item(fact: Fact, *, now: float | None = None,
+                       config: MemoryConfig | None = None) -> dict[str, Any]:
+    """把一条 Fact 渲染成 UI / 快照用的 dict（SPEC §6 的 ``long.items`` 形状）。"""
+    cfg = config or MemoryConfig()
+    stamp = as_ms(now)
+    return {
+        "id": fact.id,
+        "content": fact.content,
+        "category": fact.category,
+        "confidence": round(fact.confidence, 3),
+        "evidence_count": fact.evidence_count,
+        "strength": round(
+            strength(fact, stamp, episode_tau=cfg.episode_tau_days,
+                     fact_tau=cfg.fact_tau_days),
+            3,
+        ),
+        "last_confirmed_label": retrieval.format_time_label(fact.last_confirmed, stamp),
+        "archived": fact.archived,
+        "superseded_by": fact.superseded_by,
+    }
 
 
 class MemoryEngine:
@@ -161,16 +185,30 @@ class MemoryEngine:
 
     def consolidate(self, role: str, *, force: bool = False,
                     now: float | None = None) -> ConsolidationResult:
-        """执行一次「睡眠整理」，结果同时写入 :attr:`last_consolidation`。"""
+        """执行一次「睡眠整理」，结果同时写入 :attr:`last_consolidation`。
+
+        真正发生固化时会额外写一份 L3 快照（``data/archive/<角色>/<id>.json``）。
+        """
         stamp = as_ms(now)
         memory = self._role_memory(role)
         result = run_consolidation(
-            memory, llm=self.llm, config=self.config, now=stamp, force=force
+            memory,
+            llm=self.llm,
+            config=self.config,
+            now=stamp,
+            force=force,
+            role=role,
+            archive_dir=self.archive_dir,
         )
         if result.done:
             self._commit(role, memory)
         self.last_consolidation = result
         return result
+
+    @property
+    def archive_dir(self) -> Path:
+        """L3 快照的落盘根目录（记忆文件同级的 ``archive/``）。"""
+        return layers.archive_root(self.store.path)
 
     def close_loop(self, role: str, loop_id: str, *, now: float | None = None) -> bool:
         """手动关闭一个未闭环事件；成功返回 True。"""
@@ -206,13 +244,36 @@ class MemoryEngine:
         self._commit(role, memory)
         return result
 
+    def correct_fact(self, role: str, fact_id: str, new_content: str, *,
+                     category: str | None = None,
+                     now: float | None = None) -> dict | None:
+        """用户亲手纠正一条事实（L2）：新事实高置信，旧事实 ``superseded_by`` 留档。
+
+        Returns:
+            新事实的 UI 形状 dict（同 :meth:`snapshot_for_ui` 的 long 条目）；找不到返回 None。
+        """
+        stamp = as_ms(now)
+        memory = self._role_memory(role)
+        corrected = layers.apply_correction(
+            memory, fact_id, new_content, category=category, now=stamp, config=self.config
+        )
+        if corrected is None:
+            return None
+        self._commit(role, memory)
+        return fact_snapshot_item(corrected, now=stamp, config=self.config)
+
     # ------------------------------------------------------------------
     # 读路径
     # ------------------------------------------------------------------
     def retrieve(self, role: str, query: str, emotion: str = "平静", *,
                  tiers: set[str] | None = None,
+                 include_self: bool = False,
                  now: float | None = None) -> MemoryBundle:
-        """按 SPEC §3.1 公式检索三层记忆，返回带可解释 Trace 的 MemoryBundle。"""
+        """按 SPEC §3.1 公式检索三层记忆，返回带可解释 Trace 的 MemoryBundle。
+
+        Args:
+            include_self: 是否把 L4 自我认知带进 bundle（只在会话首轮由 UI 传 True）。
+        """
         stamp = as_ms(now)
         feeling = normalize_emotion(emotion)
         memory = self._role_memory(role)
@@ -261,11 +322,35 @@ class MemoryEngine:
             ),
             style_directives=directives,
             block=selection.block,
+            include_self=include_self,
+            self_notes=(
+                layers.self_note_payloads(
+                    memory, limit=self.config.self_note_inject_max, now=stamp
+                )
+                if include_self
+                else []
+            ),
         )
         return bundle
 
-    def build_memory_block(self, bundle: MemoryBundle) -> str:
-        """把 MemoryBundle 渲染成注入 system prompt 的中文记忆块（无多余空行）。"""
+    def build_memory_block(self, bundle: MemoryBundle, *, include_self: bool = False) -> str:
+        """把 MemoryBundle 渲染成注入 system prompt 的中文记忆块（无多余空行）。
+
+        ``include_self=True`` 时在末尾追加「【它的自我叙述】」一节（最多 3 条，绝不出现 "None"）。
+        """
+        want_self = include_self or bool(getattr(bundle, "include_self", False))
+        self_section = (
+            layers.render_self_section(getattr(bundle, "self_notes", []) or [])
+            if want_self
+            else ""
+        )
+        text = self._base_block(bundle)
+        if self_section:
+            text = f"{text}\n\n{self_section}" if text else self_section
+        return text.strip()
+
+    def _base_block(self, bundle: MemoryBundle) -> str:
+        """渲染三层记忆本体（不含 L4 自我叙述小节）。"""
         if bundle.block:
             return bundle.block.strip()
         if not (bundle.facts or bundle.episodes or bundle.working_turns or bundle.loops):
@@ -349,6 +434,29 @@ class MemoryEngine:
         return openers[: max(1, limit)]
 
     # ------------------------------------------------------------------
+    # L0 原文库 / L3 快照 / L4 自我认知
+    # ------------------------------------------------------------------
+    def search_archive(self, role: str, query: str, *, limit: int = 5,
+                       now: float | None = None) -> list[dict]:
+        """在 L0 原文库（全量历史对话）里检索，返回按相似度降序的命中列表。"""
+        cap = limit if limit and limit > 0 else self.config.archive_top_k
+        return layers.search_archive(self.data, role, query, limit=cap, now=now)
+
+    def archive_stats(self, role: str) -> dict:
+        """L0 原文库规模统计：``{messages, user_messages, first_label, last_label}``。"""
+        return layers.archive_stats(self.data, role)
+
+    def self_notes(self, role: str, *, limit: int = 3) -> list[dict]:
+        """L4 自我认知：最近的若干条自我叙述（按更新时间倒序）。"""
+        memory = self._role_memory(role)
+        return layers.self_note_payloads(memory, limit=limit)
+
+    def list_snapshots(self, role: str, *, limit: int = 5) -> list[dict]:
+        """L3 固化快照索引（按时间倒序）。"""
+        memory = self._role_memory(role)
+        return layers.list_snapshot_payloads(memory, limit=limit)
+
+    # ------------------------------------------------------------------
     # UI 快照
     # ------------------------------------------------------------------
     def stats(self, role: str) -> dict:
@@ -424,17 +532,7 @@ class MemoryEngine:
         }
 
         def fact_item(fact: Fact) -> dict:
-            return {
-                "id": fact.id,
-                "content": fact.content,
-                "category": fact.category,
-                "confidence": round(fact.confidence, 3),
-                "evidence_count": fact.evidence_count,
-                "strength": item_strength(fact),
-                "last_confirmed_label": retrieval.format_time_label(fact.last_confirmed, stamp),
-                "archived": fact.archived,
-                "superseded_by": fact.superseded_by,
-            }
+            return fact_snapshot_item(fact, now=stamp, config=config)
 
         long_term = {
             "items": [fact_item(fact) for fact in memory.facts],
@@ -470,6 +568,27 @@ class MemoryEngine:
             episode_tau=config.episode_tau_days,
             fact_tau=config.fact_tau_days,
         )
+        self_view = {
+            "items": layers.self_note_payloads(
+                memory, limit=max(1, config.self_note_max), now=stamp
+            ),
+            "count": len(memory.self_notes),
+        }
+        archive_view = layers.archive_stats(self.data, role, now=stamp)
+        snapshot_view = {
+            "items": [
+                {
+                    "id": snap.id,
+                    "label": snap.label,
+                    "episode_title": snap.episode_title,
+                    "facts_added": snap.facts_added,
+                    "facts_updated": snap.facts_updated,
+                }
+                for snap in sorted(memory.snapshots, key=lambda item: item.created_at,
+                                   reverse=True)
+            ],
+            "count": len(memory.snapshots),
+        }
         return {
             "short": short,
             "mid": mid,
@@ -478,7 +597,10 @@ class MemoryEngine:
             "loops": loops,
             "stats": self._stats(memory, stamp),
             "decay_curve": curve,
+            "self": self_view,
+            "archive": archive_view,
+            "snapshots": snapshot_view,
         }
 
 
-__all__ = ["DEFAULT_OPENER", "MemoryEngine", "normalize_emotion"]
+__all__ = ["DEFAULT_OPENER", "MemoryEngine", "fact_snapshot_item", "normalize_emotion"]

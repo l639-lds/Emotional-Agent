@@ -8,11 +8,14 @@ from __future__ import annotations
 
 import json
 import math
+from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
 from core.config import (
     MEMORY_BLOCK_BUDGET,
+    MEMORY_VERSION,
     W_EMO,
     W_IMP,
     W_REC,
@@ -20,7 +23,8 @@ from core.config import (
     MemoryConfig,
     stage_of,
 )
-from memory_os import MemoryEngine, MemoryStore, decay, similarity
+from memory_os import MemoryEngine, MemoryStore, decay, layers, similarity
+from memory_os.consolidate import run_consolidation
 from memory_os.schema import (
     Fact,
     WorkingTurn,
@@ -82,6 +86,7 @@ def make_payload(**overrides) -> dict:
         "loops_close": [],
         "nickname": None,
         "relationship": {"trust_delta": 1.0, "inside_joke": None, "shared_theme": None},
+        "self_note": {"content": "我学会了先听完再回应，不急着给建议。", "note_type": "表达"},
     }
     payload.update(overrides)
     return payload
@@ -133,11 +138,11 @@ def test_store_roundtrip_atomic_and_migration(tmp_path):
     store.save(data)
 
     raw = json.loads(path.read_text(encoding="utf-8"))
-    assert raw["version"] == 3
+    assert raw["version"] == MEMORY_VERSION
     assert list(path.parent.glob("*.tmp")) == []  # 原子写不留临时文件
 
     loaded = store.load()
-    assert loaded["version"] == 3
+    assert loaded["version"] == MEMORY_VERSION
     assert get_role_memory(loaded, ROLE).turns[0].content == "你好"
     assert get_role_memory(loaded, ROLE).facts[0].content == "用户喜欢猫"
 
@@ -154,7 +159,7 @@ def test_store_roundtrip_atomic_and_migration(tmp_path):
         encoding="utf-8",
     )
     migrated = store.load()
-    assert migrated["version"] == 3
+    assert migrated["version"] == MEMORY_VERSION
     assert migrated["chats"][ROLE][0]["content"] == "旧消息"
     migrated_role = get_role_memory(migrated, ROLE)
     assert migrated_role.turns, "v2 的聊天记录应预热成短期记忆"
@@ -165,7 +170,7 @@ def test_store_roundtrip_atomic_and_migration(tmp_path):
     path.write_text(json.dumps({ROLE: [{"role": "user", "content": "远古消息", "ts": T0}]},
                                ensure_ascii=False), encoding="utf-8")
     flat = store.load()
-    assert flat["version"] == 3
+    assert flat["version"] == MEMORY_VERSION
     assert flat["chats"][ROLE][0]["content"] == "远古消息"
 
     # 破损 JSON：不抛异常、留 .bak、重建空库
@@ -495,7 +500,7 @@ def test_snapshot_keys_match_spec(tmp_path):
     snapshot = engine.snapshot_for_ui(ROLE, now=T0 + 60_000)
 
     assert set(snapshot) == {"short", "mid", "long", "relationship", "loops", "stats",
-                             "decay_curve"}
+                             "decay_curve", "self", "archive", "snapshots"}
     assert set(snapshot["short"]) == {"turns", "summary", "count"}
     assert set(snapshot["short"]["turns"][0]) == {"role", "content", "ts_label", "emotion"}
     assert isinstance(snapshot["short"]["turns"][0]["ts_label"], str)
@@ -553,3 +558,229 @@ def test_shared_facts_and_stats(tmp_path):
     # 主动关怀：没有未闭环事件也要给一句兜底开场
     openers = engine.proactive_openers(ROLE, limit=2, now=T0 + 90_000)
     assert openers and all(isinstance(text, str) and text for text in openers)
+
+
+# ---------------------------------------------------------------------------
+# 12. v4：L0 原文库 / L3 固化快照 / L4 自我认知
+# ---------------------------------------------------------------------------
+def _seed_archive(engine: MemoryEngine, role: str) -> None:
+    """往 L0 原文库塞几段历史对话（app.py 侧写入 chats 的形态）。"""
+    engine.data["chats"][role] = [
+        {"role": "user", "content": "我喜欢下雨天，坐在窗边喝手冲咖啡。", "ts": T0},
+        {"role": "assistant", "content": "那种天气确实适合慢慢喝一杯。", "ts": T0 + 1000},
+        {"role": "user", "content": "下周三两点有个实习面试，有点慌。", "ts": T0 + 2000},
+    ]
+    engine.save()
+
+
+def test_v3_file_still_loads(tmp_path):
+    """v3 旧库（缺 self_notes / snapshots）仍能 load，缺失字段补空列表。"""
+    path = tmp_path / "memory.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 3,
+                "chats": {ROLE: [{"role": "user", "content": "旧对话", "ts": T0}]},
+                "roles": {
+                    ROLE: {
+                        "turns": [],
+                        "working_summary": "",
+                        "episodes": [],
+                        "facts": [{"content": "用户喜欢猫", "category": "喜好"}],
+                        "open_loops": [],
+                        "relationship": {"intimacy": 30.0, "trust": 2.0},
+                        "last_consolidated_turn": 0,
+                        "turn_counter": 1,
+                    }
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    loaded = MemoryStore(path).load()
+    assert loaded["version"] == MEMORY_VERSION
+    memory = get_role_memory(loaded, ROLE)
+    assert memory.self_notes == [] and memory.snapshots == []
+    assert memory.facts[0].content == "用户喜欢猫"
+
+
+def test_self_note_dedupe_and_cap(tmp_path):
+    """L4：相似自我叙述只刷计数，不同内容新增，超过上限丢最旧。"""
+    engine, _ = make_engine(tmp_path)
+    talk(engine, 3)
+    engine.consolidate(ROLE, now=T0)
+    memory = get_role_memory(engine.data, ROLE)
+    assert len(memory.self_notes) == 1
+    first = memory.self_notes[0]
+    assert first.content.startswith("我学会了先听完再回应")
+    assert first.note_type == "表达"
+
+    # 第二次固化：LLM 给出几乎一样的自我叙述 → 只刷 mention_count / updated_at
+    talk(engine, 3, start=10, now=T0 + 600_000)
+    engine.consolidate(ROLE, now=T0 + 600_000)
+    memory = get_role_memory(engine.data, ROLE)
+    assert len(memory.self_notes) == 1
+    assert memory.self_notes[0].mention_count == 2
+    assert memory.self_notes[0].updated_at >= T0 + 600_000
+
+    # 上限：把合并阈值调到不可能命中，灌 45 条不同内容，只保留最近 40 条
+    loose = replace(engine.config, self_note_merge_sim=1.01)
+    for index in range(45):
+        layers.apply_self_note(
+            memory, {"content": f"第{index}条独一无二的自我观察：学会等你把话说完。",
+                     "note_type": "成长"},
+            now=T0 + index * 1000, config=loose,
+        )
+    assert len(memory.self_notes) == engine.config.self_note_max == 40
+    assert memory.self_notes[-1].content.startswith("第44条")
+
+
+def test_snapshot_written_and_indexed(tmp_path):
+    """L3：真正固化时快照文件落盘、索引有条目、list_snapshots 可读。"""
+    engine, _ = make_engine(tmp_path)
+    _seed_archive(engine, ROLE)
+    talk(engine, 3)
+    engine.consolidate(ROLE, now=T0)
+
+    memory = get_role_memory(engine.data, ROLE)
+    assert len(memory.snapshots) == 1
+    snap = memory.snapshots[0]
+    assert snap.path, "快照路径不能为空"
+    assert snap.episode_title == "找实习的焦虑"
+    assert snap.facts_added == 2
+    target = Path(snap.path)
+    if not target.is_absolute():
+        target = layers.PROJECT_ROOT / snap.path
+    assert target.exists(), f"快照文件应真的落盘：{snap.path}"
+    body = json.loads(target.read_text(encoding="utf-8"))
+    assert body["id"] == snap.id
+    assert body["episode"]["title"] == "找实习的焦虑"
+    assert len(body["facts_added"]) == 2
+    assert snapshot_label_like(body["created_at"])
+
+    listed = engine.list_snapshots(ROLE, limit=5)
+    assert len(listed) == 1
+    assert set(listed[0]) == {"id", "label", "episode_title", "facts_added",
+                              "facts_updated", "self_note"}
+    assert listed[0]["self_note"].startswith("我学会了")
+    # 落盘失败不能影响主流程：把 archive 目录换成一个文件
+    blocker = tmp_path / "blocked"
+    blocker.write_text("not a dir", encoding="utf-8")
+    engine.archive_dir  # noqa: B018  只验证属性可用
+    talk(engine, 2, start=20, now=T0 + 59_000)
+    result = run_consolidation(
+        get_role_memory(engine.data, ROLE),
+        llm=FakeLLM(make_payload()),
+        config=engine.config,
+        now=T0 + 60_000,
+        force=True,
+        role=ROLE,
+        archive_dir=blocker,
+    )
+    assert result.done is True
+    assert any("快照写入失败" in note for note in result.notes)
+
+
+def snapshot_label_like(stamp: float) -> bool:
+    """断言快照时间标签是 ``月-日 时:分`` 形式。"""
+    label = layers.snapshot_label(stamp)
+    return len(label) == 11 and label[2] == "-" and label[5] == " " and label[8] == ":"
+
+
+def test_correct_fact_supersedes_old(tmp_path):
+    """L2 纠正：新事实 confidence=0.9、evidence_count=旧+1，旧事实 superseded_by 指向新 id。"""
+    engine, _ = make_engine(tmp_path)
+    seed_facts(
+        engine, ROLE,
+        [Fact(content="用户喜欢喝手冲咖啡", category="喜好", confidence=0.7,
+              evidence_count=2, first_seen=T0, last_confirmed=T0)],
+    )
+    old = get_role_memory(engine.data, ROLE).facts[0]
+    corrected = engine.correct_fact(ROLE, old.id, "用户只喝浅烘的手冲咖啡", now=T0 + 1000)
+    assert corrected is not None
+    assert corrected["confidence"] == pytest.approx(0.9)
+    assert corrected["evidence_count"] == old.evidence_count + 1
+    assert corrected["content"] == "用户只喝浅烘的手冲咖啡"
+    assert set(corrected) == {
+        "id", "content", "category", "confidence", "evidence_count", "strength",
+        "last_confirmed_label", "archived", "superseded_by",
+    }
+    memory = get_role_memory(engine.data, ROLE)
+    stored_old = next(fact for fact in memory.facts if fact.id == old.id)
+    new_fact = next(fact for fact in memory.facts if fact.id == corrected["id"])
+    assert stored_old.superseded_by == new_fact.id
+    assert new_fact.origin == "user_correction"
+    assert new_fact.active is True
+    # 旧事实不再注入记忆块
+    bundle = engine.retrieve(ROLE, "咖啡", "平静", now=T0 + 2000)
+    assert all("用户喜欢喝手冲咖啡" not in item.text for item in bundle.facts)
+    # 找不到 / 空内容 → None
+    assert engine.correct_fact(ROLE, "fact_not_exist", "随便改改", now=T0) is None
+    assert engine.correct_fact(ROLE, new_fact.id, "   ", now=T0) is None
+
+
+def test_search_archive_and_stats(tmp_path):
+    """L0：原文库检索命中历史原话（按分数降序、带时间标签），统计计数正确。"""
+    engine, _ = make_engine(tmp_path)
+    _seed_archive(engine, ROLE)
+    hits = engine.search_archive(ROLE, "手冲咖啡", limit=2, now=T0 + 10_000)
+    assert hits, "应能检索到历史原文"
+    assert hits[0]["text"] == "我喜欢下雨天，坐在窗边喝手冲咖啡。"
+    assert hits[0]["sender"] == "user"
+    assert isinstance(hits[0]["ts_label"], str) and hits[0]["ts_label"]
+    scores_sorted = [item["score"] for item in hits]
+    assert scores_sorted == sorted(scores_sorted, reverse=True)
+    assert engine.search_archive(ROLE, "量子物理", limit=2) == []
+    assert engine.search_archive("没有这个角色", "咖啡") == []
+
+    stats = engine.archive_stats(ROLE)
+    assert stats["messages"] == 3
+    assert stats["user_messages"] == 2
+    assert stats["first_label"] and stats["last_label"]
+
+
+def test_build_memory_block_include_self(tmp_path):
+    """L4 注入：include_self=True 时记忆块含【它的自我叙述】，且绝不出现 "None"。"""
+    engine, _ = make_engine(tmp_path)
+    talk(engine, 3)
+    engine.consolidate(ROLE, now=T0)
+    plain = engine.retrieve(ROLE, "找实习", "平静", now=T0)
+    assert plain.include_self is False and plain.self_notes == []
+    assert "【它的自我叙述】" not in engine.build_memory_block(plain)
+
+    with_self = engine.retrieve(ROLE, "找实习", "平静", include_self=True, now=T0)
+    assert with_self.include_self is True
+    assert len(with_self.self_notes) == 1
+    block = engine.build_memory_block(with_self, include_self=True)
+    assert "【它的自我叙述】" in block
+    assert "我学会了先听完再回应" in block
+    assert "None" not in block
+    assert block == block.strip()
+    # 没有自我叙述时也不该硬塞一个空小节
+    engine2, _ = make_engine(tmp_path / "empty")
+    empty_bundle = engine2.retrieve(ROLE, "随便", "平静", include_self=True, now=T0)
+    assert "【它的自我叙述】" not in engine2.build_memory_block(empty_bundle, include_self=True)
+
+
+def test_snapshot_v4_keys(tmp_path):
+    """§8.4：snapshot_for_ui 追加的 self / archive / snapshots 三个键结构正确。"""
+    engine, _ = make_engine(tmp_path)
+    _seed_archive(engine, ROLE)
+    talk(engine, 3)
+    engine.consolidate(ROLE, now=T0)
+    snapshot = engine.snapshot_for_ui(ROLE, now=T0 + 60_000)
+
+    assert set(snapshot["self"]) == {"items", "count"}
+    assert snapshot["self"]["count"] == 1
+    assert set(snapshot["self"]["items"][0]) == {
+        "id", "content", "note_type", "created_label", "mention_count",
+    }
+    assert set(snapshot["archive"]) == {"messages", "user_messages", "first_label",
+                                       "last_label"}
+    assert snapshot["archive"]["messages"] == 3
+    assert set(snapshot["snapshots"]) == {"items", "count"}
+    assert snapshot["snapshots"]["count"] == 1
+    assert set(snapshot["snapshots"]["items"][0]) == {
+        "id", "label", "episode_title", "facts_added", "facts_updated",
+    }

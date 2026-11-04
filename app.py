@@ -1,8 +1,8 @@
 """EmoMem · 情感陪伴 Agent（Streamlit 入口）。
 
-本文件只负责界面编排：侧边栏（角色 / 人设 / 运行模式）、对话区、右侧记忆舱。
-业务逻辑分别在 `memory_os`（三层记忆）、`persona_forge`（人设编译器）、
-`core`（配置 / LLM / 离线演示）与 `ui`（状态与面板渲染）中。
+本文件只负责界面编排：侧边栏（角色 / 人设 / 运行模式）＋ 三个视图
+（💬 对话 / 🧠 记忆舱 / 🧪 实验室）。业务逻辑分别在 `memory_os`（五层记忆）、
+`persona_forge`（人设编译器）、`core`（配置 / LLM / 离线演示）与 `ui`（状态与面板渲染）中。
 """
 
 from __future__ import annotations
@@ -14,6 +14,10 @@ from core import llm
 from ui import forge, panels, state
 
 USER_AVATAR = "🙂"
+VIEW_CHAT = "💬 对话"
+VIEW_MEMORY = "🧠 记忆舱"
+VIEW_LAB = "🧪 实验室"
+_SHORT_TIER = {"short": "短期", "mid": "中期", "long": "长期"}
 
 st.set_page_config(
     page_title="EmoMem · 情感陪伴",
@@ -39,6 +43,7 @@ if st.session_state.get("decay_role") != role_name:
     except Exception:  # 遗忘曲线只是加分项，失败不影响对话
         pass
     st.session_state["decay_role"] = role_name
+    st.session_state["self_note_seeded"] = False
 
 snapshot = engine.snapshot_for_ui(role_name)
 relationship = snapshot.get("relationship") or {}
@@ -52,14 +57,14 @@ avatar = state.avatar_for(role_name, card, role_file)
 # ---------------------------------------------------------------------------
 with st.sidebar:
     st.title("🧠 EmoMem")
-    st.caption("情感感知的三层记忆 · 人设编译器")
+    st.caption("五层记忆 · 人设编译器")
     if llm.is_demo_mode():
         st.warning(state.api_key_hint(), icon="🎬")
     else:
         st.success(state.api_key_hint(), icon="🔌")
 
     with st.expander("运行模式 / API Key", expanded=llm.is_demo_mode()):
-        st.caption("留空则在离线演示模式下运行：本地假模型会把三层记忆、固化、人设编译全链路跑通。")
+        st.caption("留空则在离线演示模式下运行：本地假模型会把五层记忆、固化、人设编译全链路跑通。")
         key_input = st.text_input("DeepSeek API Key", type="password", placeholder="sk-...")
         if st.button("应用 Key", use_container_width=True):
             state.set_api_key(key_input)
@@ -70,6 +75,7 @@ with st.sidebar:
     if picked != role_name:
         st.session_state["role"] = picked
         st.session_state["last_turn"] = None
+        st.session_state["self_note_seeded"] = False
         st.rerun()
 
     if st.button("⚒ 锻造新角色", use_container_width=True, type="primary"):
@@ -103,30 +109,39 @@ with st.sidebar:
 
 
 # ---------------------------------------------------------------------------
-# 主区标题
+# 顶部：角色标题 + 视图切换
 # ---------------------------------------------------------------------------
 head_left, head_right = st.columns([3, 2])
 with head_left:
     st.markdown(f"### {avatar} {role_name}")
     st.caption(f"关系阶段 **{stage}** · 亲密度 {intimacy:.0f}/100 · 调用模型 {cfg.DEEPSEEK_MODEL}")
 with head_right:
-    loop_count = (snapshot.get("stats") or {}).get("open_loops", 0)
+    stat_row = snapshot.get("stats") or {}
     st.caption(
-        f"短期 {len((snapshot.get('short') or {}).get('turns') or [])} 条 · "
-        f"中期 {len((snapshot.get('mid') or {}).get('items') or [])} 条 · "
-        f"长期 {len((snapshot.get('long') or {}).get('items') or [])} 条 · 待跟进 {loop_count} 件"
+        f"L0 原文 {int((snapshot.get('archive') or {}).get('messages', 0) or 0)} 条 · "
+        f"L1 会话 {int(stat_row.get('turns', 0) or 0)} 条 · "
+        f"L2 事实 {int(stat_row.get('facts', 0) or 0)} 条 · "
+        f"L3 快照 {int((snapshot.get('snapshots') or {}).get('count', 0) or 0)} 份 · "
+        f"L4 自述 {int((snapshot.get('self') or {}).get('count', 0) or 0)} 条"
     )
 
 for message in state.take_flash():
     st.toast(message, icon="🧠")
 
-chat_col, mem_col = st.columns([1.6, 1], gap="large")
+view = st.radio(
+    "视图",
+    [VIEW_CHAT, VIEW_MEMORY, VIEW_LAB],
+    index=0,
+    horizontal=True,
+    label_visibility="collapsed",
+    key="view",
+)
 
 
 # ---------------------------------------------------------------------------
-# 对话区
+# 视图一：对话
 # ---------------------------------------------------------------------------
-with chat_col:
+if view == VIEW_CHAT:
     thread = state.role_thread(role_name)
     for message in thread:
         sender = message.get("role", "assistant")
@@ -180,35 +195,77 @@ with chat_col:
                 state.flash(note)
         st.rerun()
 
+    last_turn = st.session_state.get("last_turn") or {}
+    if last_turn:
+        bundle = last_turn.get("bundle")
+        trace = getattr(bundle, "trace", None)
+        items = list(getattr(trace, "items", []) or [])
+        loops = list(getattr(bundle, "loops", []) or [])
+        tiers = sorted({_SHORT_TIER.get(getattr(item, "tier", ""), "") for item in items} - {""})
+        if items or loops:
+            hint = f"这一轮注入了 {len(items)} 条记忆"
+            if loops:
+                hint += f" + {len(loops)} 件未闭环的事"
+            if tiers:
+                hint += f"（覆盖 {' / '.join(tiers)} 层）"
+            if last_turn.get("self_note_used"):
+                hint += " · 本轮首次唤起 TA 的自我认知"
+            st.caption(f"{hint}　想看「为什么记得这句话」→ 切到 🧠 记忆舱 · 🧪 实验室")
+        else:
+            st.caption("这一轮还没有可复用的记忆——聊到第 4 轮会自动做一次「睡眠整理」，之后这里会显示注入了什么。")
+
 
 # ---------------------------------------------------------------------------
-# 记忆舱
+# 视图二：记忆舱（五层）
 # ---------------------------------------------------------------------------
-with mem_col:
-    st.markdown("#### 记忆舱")
-    tier_tab, trace_tab, relation_tab, ablation_tab = st.tabs(["三层", "Trace", "关系", "消融"])
+if view == VIEW_MEMORY:
+    st.markdown("#### 🧠 记忆舱")
+    st.caption("五层记忆各自记什么、现在有多少、什么时候被注入——记忆不是黑箱。")
 
-    with tier_tab:
-        panels.render_stats(snapshot)
+    layers = st.tabs(
+        ["五层总览", "L0 原文库", "L1 会话层", "L2 长期事实", "L3 固化快照", "L4 自我认知", "关系档案"]
+    )
+    with layers[0]:
+        panels.render_layer_overview(snapshot)
+        st.divider()
+        panels.render_decay_curve(snapshot)
+    with layers[1]:
+        panels.render_archive(engine, role_name, snapshot)
+    with layers[2]:
         panels.render_short(snapshot)
         panels.render_mid(snapshot, role_name)
+    with layers[3]:
         panels.render_long(snapshot, role_name)
-
-    with trace_tab:
-        panels.render_trace(st.session_state.get("last_turn"))
-
-    with relation_tab:
+    with layers[4]:
+        panels.render_snapshots(snapshot)
+    with layers[5]:
+        panels.render_self_notes(snapshot)
+    with layers[6]:
         panels.render_relationship(snapshot)
         st.divider()
         panels.render_loops(snapshot, engine, role_name)
-        st.divider()
-        panels.render_decay_curve(snapshot)
 
-    with ablation_tab:
+
+# ---------------------------------------------------------------------------
+# 视图三：实验室（Trace / 消融）
+# ---------------------------------------------------------------------------
+if view == VIEW_LAB:
+    st.markdown("#### 🧪 实验室")
+    st.caption("把「它为什么记得这句话」「关掉某一层会怎样」摊开给评委看。")
+    lab = st.tabs(["本轮 Trace", "消融开关", "记忆体检"])
+    with lab[0]:
+        panels.render_trace(st.session_state.get("last_turn"))
+    with lab[1]:
         panels.render_ablation(engine, role_name)
+    with lab[2]:
+        panels.render_stats(snapshot)
+        st.divider()
+        panels.render_self_notes(snapshot)
+        st.caption("自我认知本轮是否已注入：" + ("是" if st.session_state.get("self_note_seeded") else "否"))
 
 st.divider()
 st.caption(
-    "EmoMem · 三层记忆（短期工作记忆 / 中期情景记忆 / 长期语义画像）+ 情绪加权检索 + 记忆冲突消解 + "
-    "可解释 Trace + 关系档案驱动的人格漂移 + 未闭环事件主动关怀 + 人设编译器"
+    "EmoMem · 五层记忆（L0 原文库 / L1 会话层 / L2 长期事实 / L3 固化快照 / L4 自我认知）+ "
+    "情绪加权检索 + 记忆冲突消解 + 可解释 Trace + 关系档案驱动的人格漂移 + "
+    "未闭环事件主动关怀 + 记忆可纠正 + 人设编译器"
 )

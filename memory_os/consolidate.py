@@ -15,6 +15,7 @@ from __future__ import annotations
 import inspect
 import json
 import re
+from pathlib import Path
 from typing import Any, Callable
 
 from core.config import (
@@ -26,7 +27,7 @@ from core.config import (
     clamp,
     stage_of,
 )
-from memory_os import prompts, textsim
+from memory_os import layers, prompts, textsim
 from memory_os.schema import (
     ConsolidationResult,
     Episode,
@@ -487,8 +488,15 @@ def _build_episode(raw: Any, *, turn_start: int, turn_end: int, now: float,
 def run_consolidation(memory: RoleMemory, *, llm: JsonCaller | None = None,
                       config: MemoryConfig | None = None,
                       now: float | None = None,
-                      force: bool = False) -> ConsolidationResult:
-    """执行一次完整固化（原地修改 ``memory``），返回可展示的固化结果。"""
+                      force: bool = False,
+                      role: str = "",
+                      archive_dir: str | Path | None = None) -> ConsolidationResult:
+    """执行一次完整固化（原地修改 ``memory``），返回可展示的固化结果。
+
+    Args:
+        role: 角色名，仅用于 L3 快照的落盘目录（``<数据目录>/archive/<角色>/``）。
+        archive_dir: 快照根目录；为 None 时只写索引、不落盘文件（供纯函数调用方使用）。
+    """
     cfg = config or MemoryConfig()
     stamp = as_ms(now)
     start = max(0, min(memory.last_consolidated_turn, len(memory.turns)))
@@ -599,6 +607,12 @@ def run_consolidation(memory: RoleMemory, *, llm: JsonCaller | None = None,
     titles = [item.title for item in memory.episodes[-3:]]
     memory.working_summary = "；".join(titles)[:200]
 
+    # L4：自我认知（LLM 可选字段；规则兜底时为 None）
+    self_note_entry = payload.get("self_note")
+    self_note = layers.apply_self_note(memory, self_note_entry, now=stamp, config=cfg)
+    if self_note is not None:
+        result.notes.append(f"自我认知：{self_note.content[:24]}")
+
     before, after = result.relationship.get("before", {}), result.relationship.get("after", {})
     result.notes.insert(0, f"固化 {len(new_turns)} 条对话（用户 {len(user_turns)} 轮）")
     result.notes.append(f"生成情景「{episode.title}」")
@@ -614,6 +628,20 @@ def run_consolidation(memory: RoleMemory, *, llm: JsonCaller | None = None,
         f"（亲密度 {before.get('intimacy', 0.0):.1f} → {after.get('intimacy', 0.0):.1f}）"
     )
     result.notes.append("数据来源：LLM" if result.used_llm else "数据来源：规则兜底")
+
+    # L3：固化快照（写盘失败只记 notes，绝不影响主流程）
+    layers.write_snapshot(
+        memory,
+        role=role,
+        episode=episode,
+        facts_added=list(result.new_facts),
+        facts_updated=list(result.updated_facts),
+        self_note=self_note,
+        notes=result.notes,
+        now=stamp,
+        config=cfg,
+        archive_dir=archive_dir,
+    )
     return result
 
 

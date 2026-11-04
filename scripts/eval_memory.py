@@ -136,6 +136,8 @@ SCRIPT: tuple[dict[str, Any], ...] = (
             {"content": "不能随便提妈妈住院的事", "category": "禁忌", "confidence": 0.9},
         ],
         "loops_open": [],
+        "self_note": {"content": "我学到在他崩溃时先停住，不要急着给建议，只要说我在。",
+                      "note_type": "成长"},
     },
     {
         "episode": {"title": "阿远与下周三的复盘约定",
@@ -148,6 +150,8 @@ SCRIPT: tuple[dict[str, Any], ...] = (
             {"content": "用户喜欢喝手冲咖啡", "category": "喜好", "confidence": 0.85},
         ],
         "loops_open": [{"what": "下周三面试完跟阿远复盘", "kind": "承诺", "due_hint": "下周三"}],
+        "self_note": {"content": "我发现他更愿意听短句，说得太长他会沉默，短句反而让他继续讲。",
+                      "note_type": "表达"},
     },
     {
         "episode": {"title": "面试前的慌与团子",
@@ -160,6 +164,8 @@ SCRIPT: tuple[dict[str, Any], ...] = (
             {"content": "用户小时候养过一只橘猫叫团子，去年走了", "category": "重要人物", "confidence": 0.85},
         ],
         "loops_open": [{"what": "下周三下午两点的面试", "kind": "事件", "due_hint": "下周三"}],
+        "self_note": {"content": "我提醒自己别用「都会好的」这类话，那会让他把门关上。",
+                      "note_type": "成长"},
     },
     {
         "episode": {"title": "妈妈恢复与未来的目标",
@@ -174,6 +180,8 @@ SCRIPT: tuple[dict[str, Any], ...] = (
             {"content": "用户以后想做记忆方向的产品", "category": "长期目标", "confidence": 0.9},
         ],
         "loops_open": [],
+        "self_note": {"content": "他愿意把妈妈的事说给我听，这是很重的信任，我想小心收着。",
+                      "note_type": "关系"},
     },
     {
         "episode": {"title": "拿到记忆方向的 offer",
@@ -190,6 +198,8 @@ SCRIPT: tuple[dict[str, Any], ...] = (
         "relationship": {"intimacy_delta": 2.0, "trust_delta": 1.5,
                          "themes": ["面试", "阿远", "下雨天"],
                          "inside_joke": "小声说：咖啡暂时不能提"},
+        "self_note": {"content": "我会主动记住他提到的人名和日子，下次先接上，他会放松一点。",
+                      "note_type": "表达"},
     },
 )
 
@@ -234,11 +244,20 @@ def build_engine(workdir: Path) -> tuple[MemoryEngine, ScriptedLLM]:
 
 
 def run_dialogue(engine: MemoryEngine, *, start_ms: float = T0) -> int:
-    """按剧本跑完 40 轮对话，返回原始对话字符数（用于算压缩率）。"""
+    """按剧本跑完 40 轮对话，返回原始对话字符数（用于算压缩率）。
+
+    每个 turn 同时写入 L0 原文库（``data["chats"][角色]``，与 app.py 侧同款结构），
+    这样 :meth:`MemoryEngine.search_archive` 与「L0 原文 N 条」才有真实数据可查。
+    """
     raw_chars = 0
+    archive = engine.data.setdefault("chats", {}).setdefault(ROLE, [])
     for index, (user_text, reply, emotion) in enumerate(ROUNDS):
-        engine.record_turn(ROLE, user_text, reply, emotion, now=start_ms + index * 5 * MINUTE)
+        stamp = start_ms + index * 5 * MINUTE
+        engine.record_turn(ROLE, user_text, reply, emotion, now=stamp)
+        archive.append({"role": "user", "content": user_text, "ts": stamp})
+        archive.append({"role": "assistant", "content": reply, "ts": stamp + 1_000.0})
         raw_chars += len(user_text) + len(reply)
+    engine.save()
     return raw_chars
 
 
@@ -306,6 +325,9 @@ def main() -> int:
         ratio = (len(block) / raw_chars) if raw_chars else 0.0
         curve_map = dict(curve)
         turns = len(ROUNDS) * 2
+        self_note_count = len(memory.self_notes)
+        snapshot_count = len(memory.snapshots)
+        archive_messages = len(engine.data.get("chats", {}).get(ROLE, []))
 
         print("=" * 64)
         print("EmoMem 记忆引擎 · 离线评测（40 轮脚本化对话）")
@@ -322,6 +344,9 @@ def main() -> int:
         print(f"{'事实总数 / 有效 / 被取代':<26}{f'{len(facts_all)} / {len(facts_active)} / {len(superseded)}':>18}")
         print(f"{'情景数 / 未闭环数':<26}{f'{len(episodes)} / {len(loops_open)}':>18}")
         print(f"{'情绪门控触发次数':<26}{gated:>18}")
+        print("-" * 64)
+        print(f"五层规模：L0 原文 {archive_messages} 条 / L3 快照 {snapshot_count} 份 / "
+              f"L4 自述 {self_note_count} 条")
         print("-" * 64)
         print("遗忘曲线（全部有效记忆的平均强度）：")
         for days, average in curve:
@@ -342,6 +367,9 @@ def main() -> int:
             "turns": turns,
             "episodes": len(episodes),
             "facts": len(facts_active),
+            "self_notes": self_note_count,
+            "snapshots": snapshot_count,
+            "archive_messages": archive_messages,
         }
         METRICS_PATH.parent.mkdir(parents=True, exist_ok=True)
         METRICS_PATH.write_text(
