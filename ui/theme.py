@@ -389,9 +389,10 @@ hr {{ border: none; border-top: 1px solid var(--surface-2); }}
 
 .emo-propose {{ background: var(--surface-1); border: 1px solid var(--surface-2);
   border-radius: var(--radius-card); padding: 15px 18px 16px; margin: 2px 0 10px;
-  max-width: 66ch; margin-left: var(--bubble-offset); }}
-/* 主动开口的建议块和按钮，左边与 TA 的气泡文字起点对齐（头像 30 + 间距 14） */
+  max-width: 66ch; }}
+/* 主动开口的建议块和按钮：缩进统一交给外层容器，避免块自己再缩一次（会双倍） */
 .st-key-opener {{ margin-left: var(--bubble-offset); max-width: 66ch; }}
+.st-key-opener .emo-propose {{ margin-left: 0; }}
 /* Trace：一条记忆一行，分数是次要信息，所以压到 13px 的 faint */
 .emo-traces {{ margin: 2px 0 10px; }}
 .emo-trace {{ padding: 12px 0; border-top: 0; }}
