@@ -760,3 +760,17 @@ def avatar_input_key() -> str:
 
 def bump_avatar_input() -> None:
     st.session_state["avatar_nonce"] = int(st.session_state.get("avatar_nonce", 0)) + 1
+
+def set_role_avatar(name: str, avatar: str) -> None:
+    """改角色的头像（emoji）——内置角色也能改，改完只影响这个角色的气泡。"""
+    avatar = (avatar or "").strip()[:4]
+    if not avatar:
+        return
+    data = load_role_file()
+    entry = dict(data.get("roles", {}).get(name) or {})
+    if not entry:
+        base = DEFAULT_ROLE_RAW.get(name) or {}
+        entry = {key: value for key, value in base.items() if key in ("opening", "persona", "description")}
+    entry["avatar"] = avatar
+    data.setdefault("roles", {})[name] = entry
+    save_role_file(data)

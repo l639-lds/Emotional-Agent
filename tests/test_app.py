@@ -270,3 +270,15 @@ def test_proactive_toggle_can_turn_it_off(app):
     assert not app.exception
 
     ui_state.set_proactive_enabled(True)
+
+
+def test_role_avatar_can_be_changed(app):
+    """TA 的头像也能改（内置角色同样支持），改完出现在 TA 的气泡里。"""
+    from ui import state as ui_state
+
+    ui_state.set_role_avatar("温柔老父亲", "🧔")
+    app.run()
+    _say(app, "我叫小林，最近在准备面试")
+    html = _markdown(app)
+    assert "🧔" in html
+    assert not app.exception

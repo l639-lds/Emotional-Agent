@@ -155,6 +155,13 @@ with st.sidebar:
             st.rerun()
 
     with st.expander("人设卡（TA 是谁）", expanded=False):
+        _role_avatar_col, _role_avatar_btn = st.columns([2, 1])
+        _role_avatar = _role_avatar_col.text_input(
+            "TA 的头像", value=avatar, max_chars=4, key=f"role_avatar_{role_name}"
+        )
+        if _role_avatar_btn.button("换头像", use_container_width=True):
+            state.set_role_avatar(role_name, _role_avatar)
+            st.rerun()
         forge.render_card_preview(card)
 
     with st.expander("记忆维护", expanded=False):
