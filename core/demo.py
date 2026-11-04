@@ -1,4 +1,4 @@
-"""离线演示模式：不联网也能跑通「三层记忆 + 人设编译器」全链路。
+﻿"""离线演示模式：不联网也能跑通「三层记忆 + 人设编译器」全链路。
 
 当没有 `DEEPSEEK_API_KEY`（或显式设置 `EMO_DEMO_MODE=1`）时，
 :mod:`core.llm` 会把所有结构化调用分流到这里，用**确定性启发式**伪造模型输出。
@@ -590,13 +590,29 @@ def fake_json(
         return payload
 
     if purpose == "proactive":
+        hooks = context.get("hooks") or []
+        if hooks:
+            first = hooks[0] or {}
+            kind = str(first.get("kind") or "loop")
+            text = str(first.get("text") or "那件事")
+            openers = {
+                "loop": f"上次你说{text}，后来怎么样了？我这儿一直记着。",
+                "episode": f"上次你聊到{text}，我没好意思多问，现在有变化吗？",
+                "recent": f"你刚提到{text}，我还在想这事——现在怎么样了？",
+                "fact": f"我还记得你说过{text}，最近还顺吗？",
+            }
+            return {
+                "opener": openers.get(kind, f"上次你说{text}，后来怎么样了？"),
+                "hook": text,
+                "reason": f"{kind} 回访",
+            }
         loops = context.get("open_loops") or []
         if loops:
             return {
                 "opener": f"上次你说{loops[0].get('what', '那件事')}，后来怎么样了？",
                 "reason": "未闭环事件回访",
             }
-        return {"opener": "今天过得怎么样？", "reason": "无未闭环事件，使用日常开场"}
+        return {"opener": "今天过得怎么样？", "reason": "没有可参考的素材，使用日常开场"}
 
     if purpose == "persona_seed":
         return _persona_seed(context.get("description", user_prompt), context.get("knobs"))

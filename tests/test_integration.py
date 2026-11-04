@@ -372,3 +372,22 @@ def test_correct_fact_supersedes_old_one(tmp_path, demo_mode):
     assert "南方" in new_after["content"]
     assert engine.correct_fact(ROLE, "fact_不存在", "随便") is None
     assert engine.correct_fact(ROLE, old["id"], "   ") is None
+
+
+def test_proactive_openers_reference_what_the_user_actually_said(engine):
+    """主动开口要"接着具体的事"，不能是放之四海皆准的寒暄。"""
+    from memory_os import DEFAULT_OPENER
+
+    _feed(engine)
+    openers = engine.proactive_openers(ROLE, limit=2)
+    assert openers, "有记忆时必须能给出开场白"
+    assert openers[0] != DEFAULT_OPENER, "不该退回默认寒暄"
+    assert any(token in openers[0] for token in ("面试", "住院", "医院", "加班", "妈妈")), openers[0]
+    assert len(set(openers)) == len(openers), "同一件事不要换个说法重复出现"
+
+
+def test_proactive_opener_uses_recent_line_before_consolidation(engine):
+    """还没固化（只有短期层）时，也要能接住"你刚才说的那句话"。"""
+    engine.record_turn(ROLE, "今天在地铁上被人踩了一脚，鞋子全黑了", "哎，真够烦的。", "生气")
+    openers = engine.proactive_openers(ROLE, limit=1)
+    assert openers and "地铁" in openers[0], openers

@@ -1,4 +1,4 @@
-"""EmoMem · 情感陪伴 Agent（Streamlit 入口）。
+﻿"""EmoMem · 情感陪伴 Agent（Streamlit 入口）。
 
 本文件只负责界面编排：侧边栏（角色 / 人设 / 运行模式）＋ 三个视图
 （💬 对话 / 🧠 记忆舱 / 🧪 实验室）。业务逻辑分别在 `memory_os`（五层记忆）、
@@ -11,9 +11,10 @@ import streamlit as st
 
 from core import config as cfg
 from core import llm
-from ui import forge, panels, state
+from memory_os import DEFAULT_OPENER as FALLBACK_OPENER
+from ui import chat, forge, panels, state
 
-USER_AVATAR = "🙂"
+USER_AVATAR = "🙂"  # 默认头像；真实值来自侧边栏「我的样子」
 VIEW_CHAT = "💬 对话"
 VIEW_MEMORY = "🧠 记忆舱"
 VIEW_LAB = "🧪 实验室"
@@ -59,6 +60,16 @@ avatar = state.avatar_for(role_name, card, role_file)
 with st.sidebar:
     st.title("🧠 EmoMem")
     st.caption("五层记忆 · 人设编译器")
+
+    view = st.radio(
+        "视图",
+        [VIEW_CHAT, VIEW_MEMORY, VIEW_LAB],
+        index=0,
+        label_visibility="collapsed",
+        key="view",
+    )
+
+    st.divider()
     if llm.is_demo_mode():
         st.warning(state.api_key_hint(), icon="🎬")
     else:
@@ -67,7 +78,7 @@ with st.sidebar:
     if _key_problem:
         st.error(_key_problem, icon="🔑")
 
-    with st.expander("运行模式 / API Key", expanded=llm.is_demo_mode()):
+    with st.expander("运行模式 / API Key", expanded=False):
         st.caption(
             "Key 只存在你自己的浏览器会话里：页面只显示末 4 位指纹，别处看不到明文，"
             "退出浏览器即失效，也不会写进 data/ 或日志。"
@@ -106,6 +117,42 @@ with st.sidebar:
 
     if st.button("⚒ 锻造新角色", use_container_width=True, type="primary"):
         forge.forge_dialog()
+
+    with st.expander("我的样子（头像）", expanded=False):
+        st.caption("头像只影响你自己在对话里的样子，不会写进角色卡。")
+        _picked_avatar = st.pills(
+            "选一个",
+            state.AVATAR_PRESETS,
+            default=state.user_avatar() if state.user_avatar() in state.AVATAR_PRESETS else None,
+            key="user_avatar_pills",
+            label_visibility="collapsed",
+        )
+        if _picked_avatar and _picked_avatar != state.user_avatar():
+            state.set_user_avatar(_picked_avatar)
+            st.rerun()
+        _avatar_col, _avatar_btn = st.columns([2, 1])
+        _custom_avatar = _avatar_col.text_input(
+            "或者填一个 emoji",
+            value="",
+            placeholder=state.user_avatar(),
+            max_chars=4,
+            key=state.avatar_input_key(),
+        )
+        if _avatar_btn.button("用这个", use_container_width=True) and (_custom_avatar or "").strip():
+            state.set_user_avatar(_custom_avatar)
+            state.bump_avatar_input()  # 换掉输入框，避免旧值残留
+            st.rerun()
+        st.caption(f"现在的你：{state.user_avatar()}")
+
+    with st.expander("主动关怀（TA 要不要先开口）", expanded=False):
+        st.caption(
+            "开启后，TA 会在你还没说话时，参考「还没聊完的事 / 上次聊到的话题 / 记住的近况」先问一句，"
+            "而不是千篇一律的「今天过得怎么样」。"
+        )
+        _on = st.toggle("允许 TA 主动开口", value=state.proactive_enabled(), key="proactive_toggle")
+        if _on != state.proactive_enabled():
+            state.set_proactive_enabled(_on)
+            st.rerun()
 
     with st.expander("人设卡（TA 是谁）", expanded=False):
         forge.render_card_preview(card)
@@ -151,17 +198,7 @@ with head_right:
         f"L4 自述 {int((snapshot.get('self') or {}).get('count', 0) or 0)} 条"
     )
 
-for message in state.take_flash():
-    st.toast(message, icon="🧠")
-
-view = st.radio(
-    "视图",
-    [VIEW_CHAT, VIEW_MEMORY, VIEW_LAB],
-    index=0,
-    horizontal=True,
-    label_visibility="collapsed",
-    key="view",
-)
+flash_notes = state.take_flash()  # 本轮的固化提示，直接贴在对话下方，不用浮层挡住聊天
 
 
 # ---------------------------------------------------------------------------
@@ -169,19 +206,15 @@ view = st.radio(
 # ---------------------------------------------------------------------------
 if view == VIEW_CHAT:
     thread = state.role_thread(role_name)
-    for message in thread:
-        sender = message.get("role", "assistant")
-        with st.chat_message(sender, avatar=(USER_AVATAR if sender == "user" else avatar)):
-            st.markdown(message.get("content", ""))
-            emotion = message.get("emotion")
-            if emotion:
-                st.caption(f"{cfg.EMOTION_EMOJI.get(emotion, '')} 你当时的情绪：{emotion}")
-            if message.get("initiative"):
-                st.caption(f"↪ TA 追问：{message['initiative']}")
-            if message.get("loop_hint"):
-                st.caption(f"📌 记下待办：{message['loop_hint']}")
-            if message.get("memory_update"):
-                st.caption(f"🧠 本轮记忆更新：{message['memory_update']}")
+    chat.render_thread(
+        thread,
+        role_name=role_name,
+        role_avatar=avatar,
+        user_avatar=state.user_avatar(),
+    )
+    if flash_notes:
+        _notes = " · ".join(note if len(note) <= 26 else note[:26] + "…" for note in flash_notes[:2])
+        st.caption(f"🧠 本轮记忆更新：{_notes}")
 
     retry = st.session_state.get("retry")
     if retry:
@@ -195,14 +228,15 @@ if view == VIEW_CHAT:
             st.rerun()
 
     openers: list[str] = []
-    try:
-        openers = engine.proactive_openers(role_name, limit=1)
-    except Exception:
-        openers = []
-    # 只有真的"有件事没闭环"时才让 TA 主动开口，避免把兜底开场白当成关怀
-    if openers and snapshot.get("loops"):
+    if state.proactive_enabled():
+        try:
+            openers = engine.proactive_openers(role_name, limit=1)
+        except Exception:
+            openers = []
+    # 主动开口必须落在"具体某件事"上：只剩兜底寒暄就干脆不显示（可在侧边栏关掉这个功能）
+    if openers and openers[0] != FALLBACK_OPENER:
         with st.container(border=True):
-            st.caption("TA 想起还没问你的事：")
+            st.caption("TA 想先问一句（参考了你们之前聊到的事）：")
             st.markdown(f"「{openers[0]}」")
             if st.button("让 TA 主动开口", use_container_width=True):
                 state.append_chat(role_name, "assistant", openers[0], initiative=openers[0])
@@ -238,7 +272,7 @@ if view == VIEW_CHAT:
                 hint += " · 本轮首次唤起 TA 的自我认知"
             st.caption(f"{hint}　想看「为什么记得这句话」→ 切到 🧠 记忆舱 · 🧪 实验室")
         else:
-            st.caption("这一轮还没有可复用的记忆——聊到第 4 轮会自动做一次「睡眠整理」，之后这里会显示注入了什么。")
+            st.caption("这一轮没有命中旧记忆（还没有可复用的部分）——聊到第 4 轮会做一次「睡眠整理」，之后这里会显示注入了什么。")
 
 
 # ---------------------------------------------------------------------------

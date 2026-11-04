@@ -392,41 +392,99 @@ class MemoryEngine:
             now=now_ms(),
         ).strip()
 
+    def _proactive_hooks(self, memory: Any, *, limit: int = 3) -> list[dict]:
+        """收集"可以拿来开口"的素材：未闭环事件 > 最近聊过的话题 > 长期事实。
+
+        这是"主动关怀"能不能说人话的关键：只说 ``今天过得怎么样`` 等于没有记忆；
+        有了 hooks，开场白就能落在"上次你说的面试""你提过的失眠"这种事上。
+        """
+        hooks: list[dict] = []
+        for loop in retrieval.pick_open_loops(memory.open_loops, limit):
+            text = str(getattr(loop, "what", "") or "").strip()
+            if text:
+                hooks.append({"kind": "loop", "text": text,
+                              "detail": str(getattr(loop, "due_hint", "") or "")})
+        episodes = sorted(
+            memory.episodes,
+            key=lambda item: float(getattr(item, "created_at", 0) or 0),
+            reverse=True,
+        )
+        for episode in episodes[:2]:
+            if getattr(episode, "archived", False):
+                continue
+            topics = [str(topic) for topic in (getattr(episode, "topics", None) or []) if str(topic).strip()]
+            text = " · ".join(topics[:2]) or str(getattr(episode, "title", "") or "").strip()
+            if text:
+                hooks.append({"kind": "episode", "text": text,
+                              "detail": str(getattr(episode, "title", "") or "")})
+        fact_categories = {"近况", "长期目标", "喜好", "重要人物"}
+        for fact in memory.facts:
+            if not getattr(fact, "active", False):
+                continue
+            if str(getattr(fact, "category", "")) not in fact_categories:
+                continue
+            text = str(getattr(fact, "content", "") or "").strip()
+            if text:
+                hooks.append({"kind": "fact", "text": text,
+                              "detail": str(getattr(fact, "category", ""))})
+            if sum(1 for hook in hooks if hook["kind"] == "fact") >= 2:
+                break
+        if not hooks:
+            # 还没有固化过记忆时，至少能接住"你刚才说的那句话"，避免一开口就是空泛寒暄
+            for turn in reversed(memory.turns):
+                if str(getattr(turn, "role", "")) != "user":
+                    continue
+                text = str(getattr(turn, "content", "") or "").strip()
+                text = text.rstrip("。！？.!?，,、；;")
+                if text:
+                    hooks.append({"kind": "recent", "text": text[:24], "detail": "刚才说的话"})
+                break
+        return hooks[: max(1, limit + 3)]
+
     def proactive_openers(self, role: str, *, limit: int = 3,
                           now: float | None = None) -> list[str]:
-        """生成主动关怀开场白：优先用未闭环事件，没有就回到日常寒暄。
+        """生成主动关怀开场白：优先未闭环事件，其次最近话题/长期事实，最后才日常寒暄。
 
-        同一个未闭环事件只出一条（LLM 措辞或模板二选一），跨条再用相似度去重，
-        保证返回的是不同事件的开口话术。
+        每条素材只出一句（LLM 措辞或模板二选一），跨条按相似度去重，
+        所以返回的是"不同事情的开口话术"，而不是同一句的几种说法。
         """
         as_ms(now)  # 保留时间注入，当前不参与选择，只保证调用契约一致
         memory = self._role_memory(role)
-        loops = retrieval.pick_open_loops(memory.open_loops, max(1, limit))
+        hooks = self._proactive_hooks(memory, limit=max(1, limit))
         payload: dict[str, Any] = {}
-        if loops:
+        if hooks:
             try:
                 payload = call_llm_json(
                     self.llm,
                     prompts.PROACTIVE_SYSTEM,
-                    prompts.build_proactive_user_prompt(
-                        [{"what": loop.what, "kind": loop.kind, "due_hint": loop.due_hint}
-                         for loop in loops]
-                    ),
+                    prompts.build_proactive_user_prompt(hooks),
                     purpose="proactive",
-                    demo_context={"open_loops": [{"what": loop.what} for loop in loops]},
+                    demo_context={
+                        "hooks": hooks,
+                        "open_loops": [{"what": hook["text"]} for hook in hooks if hook["kind"] == "loop"],
+                    },
                     max_tokens=400,
                 )
             except Exception:  # 主动关怀失败不能影响主流程
                 payload = {}
         llm_opener = _clip(payload.get("opener"), 80)
         openers: list[str] = []
-        for index, loop in enumerate(loops):
-            template = f"上次你提到{loop.what}，后来怎么样了？"
-            text = template
+        for index, hook in enumerate(hooks):
+            kind = hook["kind"]
+            text = hook["text"]
+            if kind == "loop":
+                template = f"上次你提到{text}，后来怎么样了？"
+            elif kind == "episode":
+                template = f"上次你聊到{text}，后来有变化吗？"
+            elif kind == "recent":
+                template = f"你刚说的「{text}」，我还记着——现在怎么样了？"
+            else:
+                template = f"我还记得你说过{text}，最近还好吗？"
+            opener = template
             if index == 0 and llm_opener and textsim.similarity(llm_opener, template) < 0.8:
-                text = llm_opener
-            if all(textsim.similarity(text, kept) < 0.8 for kept in openers):
-                openers.append(text)
+                opener = llm_opener
+            if all(textsim.similarity(opener, kept) < 0.8 for kept in openers):
+                openers.append(opener)
             if len(openers) >= limit:
                 break
         if not openers:

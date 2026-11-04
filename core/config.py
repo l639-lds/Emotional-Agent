@@ -20,6 +20,7 @@ DOCS_DIR = APP_DIR / "docs"
 MEMORY_FILE = DATA_DIR / "memory.json"
 CUSTOM_ROLES_FILE = DATA_DIR / "custom_roles.json"
 ARCHIVE_DIR = DATA_DIR / "archive"   # L3 固化快照落盘目录（data/archive/<角色>/<id>.json）
+SETTINGS_FILE = DATA_DIR / "settings.json"   # 界面偏好：我的头像、是否允许 TA 主动开口
 
 # 存储版本：v4 在 v3 基础上加了 L3 快照索引与 L4 自我认知
 MEMORY_VERSION = 4

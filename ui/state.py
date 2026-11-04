@@ -696,3 +696,67 @@ def clear_api_key() -> None:
     """忘掉本会话的 Key（回到服务端 Key 或离线演示模式）。"""
     st.session_state["api_key"] = ""
     llm.set_session_api_key("")
+
+# ---------------------------------------------------------------------------
+# 界面偏好（data/settings.json）：我的头像、是否允许 TA 主动开口
+#
+# 这两个都是"用户自己的偏好"，不是角色数据：换角色应该保留，所以单独存一份。
+# 读失败一律回到默认值，绝不让设置文件坏掉时整个应用起不来。
+# ---------------------------------------------------------------------------
+
+AVATAR_PRESETS = ["🙂", "🐱", "🐼", "🦊", "🌙", "🍃", "🧑", "👩"]
+DEFAULT_USER_AVATAR = "🙂"
+
+
+def _load_settings() -> dict[str, Any]:
+    try:
+        raw = json.loads(cfg.SETTINGS_FILE.read_text(encoding="utf-8"))
+        return raw if isinstance(raw, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_settings(**patch: Any) -> None:
+    data = _load_settings()
+    data.update(patch)
+    try:
+        cfg.SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        temp_file = cfg.SETTINGS_FILE.with_suffix(".json.tmp")
+        temp_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        temp_file.replace(cfg.SETTINGS_FILE)
+    except Exception:
+        pass  # 偏好存不下来也不该影响对话
+
+
+def user_avatar() -> str:
+    """我在对话里的头像：会话里改过就用会话里的，否则用上次保存的偏好。"""
+    value = str(st.session_state.get("user_avatar") or "").strip()
+    if value:
+        return value[:4]
+    return str(_load_settings().get("user_avatar") or DEFAULT_USER_AVATAR)[:4]
+
+
+def set_user_avatar(value: str) -> None:
+    value = (value or "").strip()[:4] or DEFAULT_USER_AVATAR
+    st.session_state["user_avatar"] = value
+    _save_settings(user_avatar=value)
+
+
+def proactive_enabled() -> bool:
+    """是否允许 TA 在等你说话时主动开口（默认开）。"""
+    if "proactive_enabled" in st.session_state:
+        return bool(st.session_state["proactive_enabled"])
+    return bool(_load_settings().get("proactive_enabled", True))
+
+
+def set_proactive_enabled(value: bool) -> None:
+    st.session_state["proactive_enabled"] = bool(value)
+    _save_settings(proactive_enabled=bool(value))
+
+def avatar_input_key() -> str:
+    """自定义头像输入框的 key（带 nonce，提交后换一个，避免旧值残留）。"""
+    return f"avatar_input_{int(st.session_state.get('avatar_nonce', 0))}"
+
+
+def bump_avatar_input() -> None:
+    st.session_state["avatar_nonce"] = int(st.session_state.get("avatar_nonce", 0)) + 1

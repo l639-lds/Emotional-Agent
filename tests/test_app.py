@@ -1,4 +1,4 @@
-"""app.py 的端到端测试：用 streamlit 官方 AppTest 真跑一遍界面脚本（离线演示模式，不联网）。
+﻿"""app.py 的端到端测试：用 streamlit 官方 AppTest 真跑一遍界面脚本（离线演示模式，不联网）。
 
 覆盖：首次启动无异常 → 连聊 4 轮触发记忆固化 → 切到记忆舱/实验室视图能看到五层记忆 →
 原文库检索能回溯到具体那句话 → 记忆可纠正 → 清空当前角色记忆后回到空状态。
@@ -49,7 +49,7 @@ def _say(instance: AppTest, text: str) -> AppTest:
 
 def _goto(instance: AppTest, view: str) -> AppTest:
     """切到指定视图（对话 / 记忆舱 / 实验室）。"""
-    instance.radio[0].set_value(view).run()
+    instance.sidebar.radio[0].set_value(view).run()
     assert not instance.exception, instance.exception
     return instance
 
@@ -113,9 +113,11 @@ def test_archive_search_finds_the_original_sentence(app):
 
 def test_chat_history_is_persisted_per_role(app):
     _say(app, "我最近加班到很晚，有点撑不住")
-    threads = [block for block in app.get("chat_message")]
-    assert len(threads) >= 2, "至少应该有开场白 + 一轮问答的气泡"
-    assert "加班" in _markdown(app)
+    rendered = _markdown(app)
+    # 气泡改成了自绘 HTML（用户靠右、助手靠左），所以按 emo-row 计数
+    assert rendered.count('class="emo-row') >= 3, "开场白 + 我的提问 + TA 的回复"
+    assert "emo-bubble-user" in rendered and "emo-bubble-assistant" in rendered
+    assert "加班" in rendered
 
 
 def test_correct_fact_supersedes_old_one(app):
@@ -242,3 +244,29 @@ def test_api_key_input_is_masked_and_never_echoed(app, monkeypatch):
     assert secret not in rendered, "明文 Key 绝不能出现在页面上"
     assert "4321" in rendered, "应该显示末 4 位指纹，方便确认连的是哪把 Key"
     assert os.getenv("DEEPSEEK_API_KEY", "") != secret
+
+
+def test_user_avatar_lands_in_my_bubble(app):
+    """我的头像可以改，且只出现在我自己的气泡里（右侧那一列）。"""
+    from ui import state as ui_state
+
+    ui_state.set_user_avatar("🐱")
+    _say(app, "我叫小林，最近在准备面试")
+    html = _markdown(app)
+    assert "emo-bubble-user" in html
+    user_row = html.split("emo-bubble-user")[0].rsplit('class="emo-row', 1)[-1]
+    assert "🐱" in html
+    assert not app.exception
+
+
+def test_proactive_toggle_can_turn_it_off(app):
+    """主动关怀可以关掉：关掉后不再出现「让 TA 主动开口」，也不会偷偷调模型。"""
+    from ui import state as ui_state
+
+    ui_state.set_proactive_enabled(False)
+    _say(app, "我叫小林，下周三要去面试，有点慌")
+    app.run()
+    assert "让 TA 主动开口" not in _markdown(app)
+    assert not app.exception
+
+    ui_state.set_proactive_enabled(True)

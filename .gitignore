@@ -1,4 +1,4 @@
-# Python
+﻿# Python
 __pycache__/
 *.py[cod]
 *.pyo
@@ -27,6 +27,7 @@ env/
 # Runtime data: contains private conversations, memories, and custom roles
 data/memory.json
 data/custom_roles.json
+data/settings.json
 data/archive/
 data/*.tmp
 data/*.backup.json

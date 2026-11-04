@@ -110,24 +110,36 @@ def build_consolidate_user_prompt(turns: list[dict[str, Any]],
     return "\n\n".join(sections)
 
 
-PROACTIVE_SYSTEM = """你是情感陪伴 Agent 的「主动关怀器」。基于用户未闭环的事件，
-生成一句自然、具体的开场白，像是你们上次聊到一半的延续。
+PROACTIVE_SYSTEM = """你是情感陪伴 Agent 的「主动关怀器」。用户刚打开对话还没说话，
+请基于「TA 最近真实经历过的事」先问一句，让 TA 感到"你还记得"。
+
+可选素材（按优先级）：
+1. 未闭环事件：上次聊到一半、有个结果没说的事；
+2. 最近聊过的话题：前面几轮聊到的具体事情；
+3. 长期事实里的近况/目标/喜好：TA 自己说过的状态。
+
 要求：
-1. 只输出 JSON：{"opener": "一句中文开场白", "reason": "为什么挑这一件事"};
-2. 不要提「记忆」「系统」「记录」这类词，不要说教，不要凑感叹号；
-3. 一件事一句话，20-40 字，先关心结果再关心情绪；
-4. 若有时间线索（如「下周三」），要把它自然带进来。
+1. 只输出 JSON：{"opener": "一句中文开场白", "hook": "你用的是哪条素材", "reason": "为什么挑它"};
+2. **必须落到具体的事上**（提到那件事或那个话题），禁止只写「今天过得怎么样」「最近好吗」这种放之四海皆准的寒暄；
+3. 不要提「记忆」「系统」「记录」这类词，不说教，不要凑感叹号；
+4. 一句话，20-40 字，先关心结果再关心情绪；
+5. 有时间线索（如「下周三」）就自然带进来；素材里有负面情绪时语气放轻，不要追问细节。
 不要输出任何其它字符。"""
 
 
-def build_proactive_user_prompt(loops: list[dict[str, Any]]) -> str:
-    """拼装主动关怀调用的用户消息。"""
-    loop_lines = [
-        f"- {item.get('what', '')}｜类型：{item.get('kind', '待办')}｜时间线索：{item.get('due_hint') or '无'}"
-        for item in loops[:8]
-    ]
-    body = "\n".join(loop_lines) if loop_lines else "（用户最近没有未闭环的事）"
-    return f"## 未闭环事件\n{body}\n\n## 输出\n只输出符合要求的 JSON 对象。"
+def build_proactive_user_prompt(hooks: list[dict[str, Any]]) -> str:
+    """拼装主动关怀调用的用户消息（hooks 里带 kind，便于模型分清素材类型）。"""
+    kind_labels = {"loop": "未闭环事件", "episode": "最近聊过的话题", "fact": "长期事实"}
+    lines = []
+    for item in hooks[:8]:
+        kind = kind_labels.get(str(item.get("kind", "")), "素材")
+        text = str(item.get("text", "")).strip()
+        detail = str(item.get("detail", "") or "").strip()
+        if not text:
+            continue
+        lines.append(f"- [{kind}] {text}" + (f"｜补充：{detail}" if detail else ""))
+    body = "\n".join(lines) if lines else "（用户最近没有可参考的事，只能用一句轻的日常问候）"
+    return f"## 可参考的素材\n{body}\n\n## 输出\n只输出符合要求的 JSON 对象。"
 
 
 # ---------------------------------------------------------------------------
