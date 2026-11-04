@@ -116,6 +116,8 @@ CANONICAL_STAGES = ("陌生", "熟悉", "亲近", "亲密")
 MOOD_GATE_VALENCE = -0.3
 MOOD_GATE_AROUSAL = 0.6
 MOOD_GATE_SIM = 0.25
+# 信任越高，越敢碰旧伤：门槛最多放宽 30%（信任 0 → 0.25；信任 100 → 0.175）
+TRUST_GATE_RELAX = 0.30
 
 # 每层消融开关的显示名（UI 用）
 TIER_LABELS = {"short": "短期·工作记忆", "mid": "中期·情景记忆", "long": "长期·语义画像"}

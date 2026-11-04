@@ -139,6 +139,22 @@ def test_mood_gate_keeps_relevant_but_drops_offtopic_old_grief(engine):
     assert "【中期" in block
 
 
+def test_trust_widens_the_mood_gate(monkeypatch):
+    """信任值有实际作用：信任越高，越敢在对方难受时提起旧事。"""
+    from memory_os import retrieval
+    from memory_os.schema import Episode
+
+    monkeypatch.setattr(retrieval.textsim, "relevance", lambda query, text: 0.20)
+    episode = Episode(id="ep_trust", title="聊到面试", summary="面试让她很慌", valence=-0.6, arousal=0.8)
+    config = cfg.MemoryConfig()
+
+    assert retrieval.mood_gate_blocks(episode, "面试", emotion="难过", config=config) is True
+    assert (
+        retrieval.mood_gate_blocks(episode, "面试", emotion="难过", config=config, trust=100.0) is False
+    ), "信任拉满时，0.20 的相关度应该越过放宽后的门槛（0.175）"
+    assert retrieval.mood_gate_blocks(episode, "面试", emotion="开心", config=config, trust=0.0) is False
+
+
 def test_proactive_openers_are_distinct(engine):
     """主动关怀：拿到的几句开口话术不能是同一件事的换皮。"""
     _feed(engine)

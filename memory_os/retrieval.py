@@ -31,6 +31,7 @@ from core.config import (
     MOOD_GATE_AROUSAL,
     MOOD_GATE_SIM,
     MOOD_GATE_VALENCE,
+    TRUST_GATE_RELAX,
     NEGATIVE_EMOTIONS,
     SHORT_TERM_INJECT_TURNS,
     TIER_LABELS,
@@ -228,8 +229,12 @@ def score_item(item: Fact | Episode, query: str, *, now: float,
 
 
 def mood_gate_blocks(item: Fact | Episode, query: str, *, emotion: str,
-                     config: MemoryConfig) -> bool:
-    """情绪门控：用户低落且这条记忆本身沉重、又和当下无关时，不注入。"""
+                     config: MemoryConfig, trust: float = 0.0) -> bool:
+    """情绪门控：用户低落且这条记忆本身沉重、又和当下无关时，不注入。
+
+    ``trust`` 是关系档案里的信任值（0..100）：信任越高，越敢在对方难受时碰旧事，
+    所以相关度门槛按 ``TRUST_GATE_RELAX`` 线性放宽（信任 100 时门槛降 30%）。
+    """
     if not getattr(config, "mood_gate", True):
         return False
     if emotion not in NEGATIVE_EMOTIONS:
@@ -240,11 +245,15 @@ def mood_gate_blocks(item: Fact | Episode, query: str, *, emotion: str,
         valence, arousal = -0.45, 0.7  # 厌恶/禁忌天然沉重
     else:
         return False
+    threshold = MOOD_GATE_SIM
+    if trust > 0:
+        safe_trust = max(0.0, min(100.0, float(trust)))
+        threshold = MOOD_GATE_SIM * (1.0 - TRUST_GATE_RELAX * safe_trust / 100.0)
     text = item.content if isinstance(item, Fact) else item.search_text
     return (
         valence < MOOD_GATE_VALENCE
         and arousal > MOOD_GATE_AROUSAL
-        and textsim.relevance(query, text) < MOOD_GATE_SIM
+        and textsim.relevance(query, text) < threshold
     )
 
 
@@ -338,9 +347,10 @@ def rank_items(role_memory, query: str, *, emotion: str, now: float,
         episode_candidates = []
     else:
         kept: list[Candidate] = []
+        trust = float(getattr(role_memory.relationship, "trust", 0.0) or 0.0)
         for candidate in episode_candidates:
             if candidate.pinned or not mood_gate_blocks(
-                candidate.item, query, emotion=emotion, config=config
+                candidate.item, query, emotion=emotion, config=config, trust=trust
             ):
                 kept.append(candidate)
             else:

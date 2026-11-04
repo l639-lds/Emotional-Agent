@@ -200,7 +200,8 @@ def render_relationship(snap: dict[str, Any]) -> None:
         st.markdown("".join(_chip(f"常聊：{t}", "#0EA5E9") for t in themes), unsafe_allow_html=True)
     st.caption(
         "这两条不是给用户看的分数，是内部状态：亲密度决定关系阶段（20/45/75 三档），"
-        "阶段再去调语气——称呼、能不能开玩笑、多久回一次。它是「人格漂移」的触发条件，"
+        "阶段再去调语气——称呼、能不能开玩笑、多久回一次；信任只做一件事："
+        "它越高，难过时越敢碰你的旧事（情绪门控门槛最多放宽 30%）。"
         "所以放在记忆舱里，不占聊天界面。"
     )
 

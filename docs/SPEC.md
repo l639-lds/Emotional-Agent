@@ -206,6 +206,8 @@ score    = W_SIM*sim + W_IMP*importance + W_REC*recency + W_EMO*emotion
 
 Mood gate（防翻旧账）：当 `emotion in {"难过","生气"}` 且 `item.valence < -0.3 and item.arousal > 0.6 and sim < 0.25`
 → 不注入，记入 `trace.skipped`，`notes` 追加一条说明。
+门槛可由信任放宽：`threshold = 0.25 * (1 - TRUST_GATE_RELAX * trust/100)`（`TRUST_GATE_RELAX=0.30`，
+信任 100 时 0.175）——`RelationshipState.trust` 的唯一决策用途。
 Pinned（必注入，仍计入 trace）：`confidence >= 0.7` 且 `category in {"身份","禁忌","约定"}` 的 Fact 最多 2 条；
 未闭环的 OpenLoop 全量（≤3 条，`due_hint` 非空优先）。
 
