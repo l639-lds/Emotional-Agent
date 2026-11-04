@@ -218,6 +218,28 @@ hr {{ border: none; border-top: 1px solid var(--surface-2); }}
 [data-baseweb="input"]:focus-within, [data-baseweb="textarea"]:focus-within {{
   border-color: var(--accent) !important;
 }}
+/* 下拉框：BaseWeb 的 select 有三层壳，只上最内层会让四角露出主题底色 */
+[data-testid="stSelectbox"] div[data-baseweb="select"] {{ background: transparent !important; }}
+[data-testid="stSelectbox"] div[data-baseweb="select"] > div {{
+  background: var(--surface-1) !important; border: 1px solid var(--surface-3) !important;
+  border-radius: var(--radius-control) !important; box-shadow: none !important;
+}}
+[data-testid="stSelectbox"] div[data-baseweb="select"] > div:hover {{ border-color: var(--surface-4) !important; }}
+[data-testid="stSelectbox"] div[data-baseweb="select"] div[role="button"],
+[data-testid="stSelectbox"] div[data-baseweb="select"] div[role="combobox"] {{
+  background: var(--surface-1) !important; border: none !important;
+}}
+[data-testid="stSelectbox"] div[data-baseweb="select"] svg {{ color: var(--muted) !important; fill: var(--muted) !important; }}
+[data-baseweb="menu"] {{ background: var(--surface-1) !important; border: 1px solid var(--surface-3) !important;
+  border-radius: var(--radius-control) !important; }}
+[data-baseweb="menu"] li {{ color: var(--ink) !important; }}
+[data-baseweb="menu"] li:hover {{ background: var(--surface-2) !important; }}
+
+/* 侧边栏里外观开关与上面的控件之间留一口气 */
+[data-testid="stSidebar"] .st-key-appearance {{ margin-top: 10px; }}
+[data-testid="stSidebar"] [data-testid="stExpanderDetails"] {{ padding: 0 14px 12px 14px; }}
+[data-testid="stSidebar"] [data-testid="stExpanderDetails"] > div {{ padding-top: 6px; }}
+
 /* 对话输入框里的 textarea 也带 data-baseweb，别让它套上强调色边框 */
 [data-testid="stChatInput"] [data-baseweb="textarea"]:focus-within {{
   border-color: var(--surface-3) !important;

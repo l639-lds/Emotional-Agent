@@ -42,3 +42,9 @@ Thumbs.db
 *.log
 
 docs/cover/preview.png
+
+# 临时脚本与截图工具
+_*.py
+_msg*.txt
+_m*.txt
+_shots*/
