@@ -88,6 +88,7 @@ def _build_css() -> str:
   --accent-line: {ACCENT_LINE};
   --bubble-line: {BUBBLE_LINE};
   --bubble-shadow: {BUBBLE_SHADOW};
+  --bubble-offset: 44px;
   --radius: 2px;            /* 结构块：表格 / 斑马纹行，棱角是它的性格 */
   --radius-control: 6px;    /* 控件：按钮 / 输入框 / pills */
   --radius-card: 12px;      /* 卡片：折叠面板 / 提示 / 建议块 */
@@ -387,7 +388,10 @@ hr {{ border: none; border-top: 1px solid var(--surface-2); }}
 .emo-layer-policy {{ font-size: var(--step-small); color: var(--muted); line-height: 1.6; }}
 
 .emo-propose {{ background: var(--surface-1); border: 1px solid var(--surface-2);
-  border-radius: var(--radius-card); padding: 15px 18px 16px; margin: 2px 0 10px; max-width: 66ch; }}
+  border-radius: var(--radius-card); padding: 15px 18px 16px; margin: 2px 0 10px;
+  max-width: 66ch; margin-left: var(--bubble-offset); }}
+/* 主动开口的建议块和按钮，左边与 TA 的气泡文字起点对齐（头像 30 + 间距 14） */
+.st-key-opener {{ margin-left: var(--bubble-offset); max-width: 66ch; }}
 /* Trace：一条记忆一行，分数是次要信息，所以压到 13px 的 faint */
 .emo-traces {{ margin: 2px 0 10px; }}
 .emo-trace {{ padding: 12px 0; border-top: 0; }}

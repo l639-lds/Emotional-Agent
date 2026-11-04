@@ -382,15 +382,16 @@ if view == VIEW_CHAT:
     # 主动开口必须落在"具体某件事"上：只剩兜底寒暄就干脆不显示（可在侧边栏关掉）
     if card:
         _why = f"<span class='emo-propose-why'>{_html.escape(card.get('reason') or '')}</span>" if card.get("reason") else ""
-        st.markdown(
-            "<div class='emo-propose'>"
-            f"<span class='emo-propose-label'>TA 想先开口 · {_html.escape(card.get('label', '问一句'))}</span>"
-            f"<p>{_html.escape(card['opener'])}</p>{_why}</div>",
-            unsafe_allow_html=True,
-        )
-        if st.button("让 TA 说这一句"):
-            st.session_state["pending_opener"] = {"role": role_name}
-            st.rerun()
+        with st.container(key="opener"):
+            st.markdown(
+                "<div class='emo-propose'>"
+                f"<span class='emo-propose-label'>TA 想先开口 · {_html.escape(card.get('label', '问一句'))}</span>"
+                f"<p>{_html.escape(card['opener'])}</p>{_why}</div>",
+                unsafe_allow_html=True,
+            )
+            if st.button("让 TA 说这一句"):
+                st.session_state["pending_opener"] = {"role": role_name}
+                st.rerun()
 
     # 点了"让 TA 主动开口"：这一句才值得让模型润色一次，然后先画打字态、再落话
     pending_opener = st.session_state.pop("pending_opener", None)
