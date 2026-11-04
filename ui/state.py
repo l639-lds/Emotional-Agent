@@ -625,6 +625,24 @@ def compile_and_preview(description: str, knobs: dict[str, float]) -> Any:
     return compile_persona(description, knobs=knobs)
 
 
+def api_key_problem() -> str:
+    """检查环境变量里的 Key 是否像"写了但写错"（返回原因，空串表示没问题）。
+
+    最常见的两种手滑：①把占位符 ``sk-xxxx`` 一起粘进去了；
+    ②在 PowerShell 里用 cmd 的 ``set NAME=value``，结果环境变量根本没设上。
+    """
+    value = os.getenv("DEEPSEEK_API_KEY", "").strip()
+    if not value:
+        return ""
+    if "xxxx" in value.lower() or "你的" in value or value.count("sk-") > 1:
+        return "DEEPSEEK_API_KEY 里还带着占位符（含 xxxx 或重复的 sk- 前缀），请整个替换成真实 Key。"
+    if not value.startswith("sk-"):
+        return "DEEPSEEK_API_KEY 不是以 sk- 开头，多半是写错了（PowerShell 要用 $env:DEEPSEEK_API_KEY=\"sk-...\"）。"
+    if len(value) < 20:
+        return "DEEPSEEK_API_KEY 太短了，看起来不像完整 Key。"
+    return ""
+
+
 def api_key_hint() -> str:
     """API Key / 演示模式状态文案。"""
     if llm.is_demo_mode():

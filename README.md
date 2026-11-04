@@ -42,19 +42,26 @@
 
 ## 2. 快速开始
 
-```bash
+```powershell
 pip install -r requirements.txt
 
-# 有 Key：真实调用 DeepSeek
-set DEEPSEEK_API_KEY=sk-xxxx        # PowerShell: $env:DEEPSEEK_API_KEY="sk-xxxx"
+# ① 有 Key：先设环境变量，再启动（PowerShell 写法，注意是 $env: 不是 set）
+$env:DEEPSEEK_API_KEY = "sk-你的真实key"
+python -c "from core import llm; print(llm.mode_label())"   # 自检：应输出「在线模型 deepseek-flash」
 streamlit run app.py
 
-# 没 Key：自动进入离线演示模式（也可显式指定模型）
-set EMO_DEMO_MODE=1
+# ② 没 Key：自动进入离线演示模式；也可以显式强制
+$env:EMO_DEMO_MODE = "1"
 streamlit run app.py
 ```
 
-界面上也可以直接粘贴 Key（侧边栏「运行模式 / API Key」），只作用于当前进程。
+> **`set` 是 cmd 的写法，在 PowerShell 里不生效**：`set DEEPSEEK_API_KEY=sk-...` 只会创建一个名字叫
+> `DEEPSEEK_API_KEY=sk-...` 的 PowerShell 变量，环境变量仍然是空的，于是应用判定「没有 Key」→ 继续走离线演示模式。
+> cmd 用户请用 `set DEEPSEEK_API_KEY=sk-你的真实key`（同一行、等号两边不要空格、不要保留占位符 `sk-xxxx`）。
+> 环境变量只在**当前这个终端**有效，且必须在启动 `streamlit` **之前**设好；换个终端窗口就要重设。
+
+界面上也可以直接粘贴 Key（侧边栏「运行模式 / API Key」→ 输入框 → 应用 Key），只作用于当前进程，不用重启。
+若 Key 写成了占位符（含 `xxxx` 或不是 `sk-` 开头），侧边栏会直接提示，而不是默默降级。
 
 界面顶部三个视图：
 

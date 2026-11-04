@@ -1,4 +1,4 @@
-"""app.py 的端到端测试：用 streamlit 官方 AppTest 真跑一遍界面脚本（离线演示模式，不联网）。
+﻿"""app.py 的端到端测试：用 streamlit 官方 AppTest 真跑一遍界面脚本（离线演示模式，不联网）。
 
 覆盖：首次启动无异常 → 连聊 4 轮触发记忆固化 → 切到记忆舱/实验室视图能看到五层记忆 →
 原文库检索能回溯到具体那句话 → 记忆可纠正 → 清空当前角色记忆后回到空状态。
@@ -176,3 +176,26 @@ def test_forget_memory_deletes_single_item(app):
     )
     forget_button.click().run()
     assert not app.exception
+
+def test_api_key_problem_flags_placeholder(monkeypatch):
+    """手滑写 Key 的两种典型情形要在侧边栏直接报出来，而不是默默降级成离线演示模式。"""
+    from core import llm
+    from ui import state
+
+    monkeypatch.delenv("EMO_DEMO_MODE", raising=False)
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-xxxxsk-dummy000000000000000000000000000000")
+    assert "占位符" in state.api_key_problem()
+    assert llm.is_demo_mode() is True, "坏 Key 应当按未配置处理，直接降级到离线演示模式"
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "fde19a5059a14d7f841d1931bdca60e3")
+    assert "sk-" in state.api_key_problem()
+    assert llm.is_demo_mode() is True
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-dummy000000000000000000000000000000")
+    assert state.api_key_problem() == ""
+    assert llm.is_demo_mode() is False
+
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    assert state.api_key_problem() == ""
+    assert llm.is_demo_mode() is True

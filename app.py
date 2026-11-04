@@ -62,9 +62,17 @@ with st.sidebar:
         st.warning(state.api_key_hint(), icon="🎬")
     else:
         st.success(state.api_key_hint(), icon="🔌")
+    _key_problem = state.api_key_problem()
+    if _key_problem:
+        st.error(_key_problem, icon="🔑")
 
     with st.expander("运行模式 / API Key", expanded=llm.is_demo_mode()):
         st.caption("留空则在离线演示模式下运行：本地假模型会把五层记忆、固化、人设编译全链路跑通。")
+        if llm.is_demo_mode():
+            st.caption(
+                "想在终端设 Key（PowerShell）：`$env:DEEPSEEK_API_KEY=\"sk-...\"`，"
+                "设好后**重启** streamlit；cmd 才用 `set DEEPSEEK_API_KEY=sk-...`。"
+            )
         key_input = st.text_input("DeepSeek API Key", type="password", placeholder="sk-...")
         if st.button("应用 Key", use_container_width=True):
             state.set_api_key(key_input)

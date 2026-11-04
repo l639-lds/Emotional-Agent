@@ -46,9 +46,29 @@ def redact(text: Any) -> str:
     return detail[:1500]
 
 
+def key_looks_placeholder(value: str) -> bool:
+    """Key 是否像"写错了/还是占位符"。
+
+    典型手滑：①把文档里的 ``sk-xxxx`` 一起粘进去；②PowerShell 里用了 cmd 的
+    ``set NAME=value``（环境变量没设上，这条只是兜底）；③漏了 ``sk-`` 前缀。
+    这种情况按"没配置"处理，直接降级到离线演示模式，比拿坏 Key 反复报错友好。
+    """
+    value = value.strip()
+    if not value:
+        return False
+    if "xxxx" in value.lower() or "你的" in value or "<" in value:
+        return True
+    if value.count("sk-") > 1:
+        return True
+    if not value.startswith("sk-"):
+        return True
+    return len(value) < 20
+
+
 def configured() -> bool:
-    """是否配置了可用的 DeepSeek API Key。"""
-    return bool(os.getenv("DEEPSEEK_API_KEY", "").strip())
+    """是否配置了可用的 DeepSeek API Key（占位符/明显写错的 Key 视为未配置）。"""
+    value = os.getenv("DEEPSEEK_API_KEY", "").strip()
+    return bool(value) and not key_looks_placeholder(value)
 
 
 def is_demo_mode() -> bool:
