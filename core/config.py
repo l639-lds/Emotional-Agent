@@ -21,6 +21,9 @@ MEMORY_FILE = DATA_DIR / "memory.json"
 CUSTOM_ROLES_FILE = DATA_DIR / "custom_roles.json"
 ARCHIVE_DIR = DATA_DIR / "archive"   # L3 固化快照落盘目录（data/archive/<角色>/<id>.json）
 SETTINGS_FILE = DATA_DIR / "settings.json"   # 界面偏好：我的头像、是否允许 TA 主动开口
+AVATAR_DIR = DATA_DIR / "avatars"    # 用户上传的头像原图（本地保存，不上传任何地方）
+AVATAR_PX = 96                       # 渲染时压到这个边长，base64 直接塞进气泡 HTML
+AVATAR_MAX_BYTES = 4 * 1024 * 1024   # 单张上限：手机照片也够用，超过就拒绝
 
 # 存储版本：v4 在 v3 基础上加了 L3 快照索引与 L4 自我认知
 MEMORY_VERSION = 4

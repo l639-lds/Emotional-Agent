@@ -524,3 +524,34 @@ build_memory_block(bundle, *, include_self=False) -> str
 - 收束：`compose(state, *, llm=None)` → `call_json(purpose="persona_brief")`，只接受 `brief>=20` 字，`knobs` 逐键 clamp(0,1)，任一异常整段回落 `fallback_brief(answers)`。
 - 编译：`compile_persona(brief, knobs=knobs)`，与「⚒ 锻造新角色」完全同一条流水线；结果存 `st.session_state["coach_result"]`，保存走 `state.save_forged_role(...)` 并把 `pending_view` 设为「💬 对话」。
 - `core/demo.py` 必须支持 `persona_interview` / `persona_brief` 两个 purpose（离线答辩演示用），措辞要承接上一句回答里的原词。
+
+---
+
+## 11. 头像与运行模式（v4.2 新增）
+
+### 11.1 头像：emoji 或上传的图片
+
+| 模块 | 契约 |
+|---|---|
+| `core/config.py` | `AVATAR_DIR = DATA_DIR / "avatars"`、`AVATAR_PX = 96`、`AVATAR_MAX_BYTES = 4 * 1024 * 1024` |
+| `ui/avatars.py` | `is_image(value)`、`store(data, *, kind, name="") -> token`（校验文件头，只收 PNG/JPG/GIF/WEBP，超限抛 `ValueError`）、`path_of(value)`（只认文件名，挡路径穿越）、`data_uri(value)`（压缩后 base64）、`display(value)`（标题/caption 用的占位 `🖼`）、`inline(value, *, size=26)`、`html_avatar(value, *, css_class="emo-avatar")`、`discard(value)` |
+| token 形态 | `img:<文件名>`，例 `img:user_ab12cd34ef.png`；**任何存储（settings.json / 角色文件）里只记 token，绝不记图片字节** |
+| 渲染 | 气泡与页头都用 `<img>` + `data:` URI（`ui/chat.py`、`app.py` 页头），不引入静态文件服务 |
+| 清洗 | `ui/state.py::_clean_avatar()`：图片 token 原样保留，其余最长 4 字符；`user_avatar()`/`set_user_avatar()`/`set_role_avatar()`/`set_forged_avatar` 一律走它 |
+| 生命周期 | 换头像 / 删角色时 `avatars.discard(旧 token)`；`.gitignore` 排除 `data/avatars/` |
+
+- 上传入口：侧边栏「我的样子（头像）」与「人设卡（TA 是谁）」各一个 `st.file_uploader`，widget key 带 `avatar_upload_nonce`（`state.avatar_upload_key()` / `state.role_avatar_upload_key(role)` / `state.bump_avatar_upload()`），存完换 key，避免同一张图反复触发保存。
+- 预设 pills 的取值必须始终是 options 里的一项：当前是图片头像时，options 末尾追加 `avatars.PLACEHOLDER`（`🖼`），default 设为它；否则 AppTest 重跑时 `pills.value` 为 `None` 会崩（`element_tree.py` 的 `indices`）。
+
+### 11.2 运行模式优先级
+
+| 情形 | `is_demo_mode()` | `mode_label()` |
+|---|---|---|
+| 本会话填了合法 Key | `False`（**最高优先**） | `在线模型 <model> · 本会话 Key sk-…尾4` |
+| 无会话 Key，但服务端有 `DEEPSEEK_API_KEY` | `False` | `在线模型 <model> · 服务端 Key sk-…尾4` |
+| 无 Key 且 `EMO_DEMO_MODE=1` | `True` | `离线演示模式（EMO_DEMO_MODE=1 强制；在本页填一个 Key 就会切回在线）` |
+| 无 Key 且无强制 | `True` | `离线演示模式（还没填 Key，本地假模型全链路可跑）` |
+
+- `forced_demo()` 只表示"服务端开了强制演示"；它**不能**压过访客自己的 Key，否则侧边栏会同时出现「已使用你的 Key」与「离线演示模式」。
+- 占位符 Key（含 `xxxx` / 不以 `sk-` 开头 / 太短）按"没填"处理（`key_looks_placeholder()`），并提示具体原因。
+- `ui/state.py::api_key_hint()` / `demo_hint()` 是这两句文案的唯一来源，别在 `app.py` 里另写一套。

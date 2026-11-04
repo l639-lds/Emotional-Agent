@@ -47,6 +47,33 @@ from memory_os.store import MemoryStore
 # 通用开场白（没有任何未闭环事件时的兜底）
 DEFAULT_OPENER = "今天过得怎么样？有什么想聊聊的吗？"
 
+# 「你刚说的「你好呀，我叫小林」」这种开场白很怪：先把纯寒暄/自我介绍的口头语剥掉，
+# 剩下的如果还不够长（<6 字），就宁可不用这条素材。
+_SMALLTALK_PREFIXES = (
+    "你好呀", "你好", "您好", "在吗", "在不在", "喂", "嗨", "hi", "hello", "嗯嗯", "嗯", "哦",
+    "那个", "我说", "话说", "对了", "其实", "就是", "然后", "而且", "所以", "麻烦你", "请问",
+)
+_SMALLTALK_SUFFIXES = ("哦", "呀", "啊", "呢", "吧", "啦", "哈", "嘛")
+
+
+def _strip_smalltalk(text: str) -> str:
+    """剥掉句首寒暄与结尾语气词，用来判断"这句话值不值得拿来开口"。"""
+    clean = " ".join(str(text or "").split())
+    changed = True
+    while changed:
+        changed = False
+        lowered = clean.lower()
+        for prefix in _SMALLTALK_PREFIXES:
+            if lowered.startswith(prefix):
+                clean = clean[len(prefix) :].lstrip("，,、 　:：")
+                changed = True
+                break
+    for suffix in _SMALLTALK_SUFFIXES:
+        if clean.endswith(suffix) and len(clean) > len(suffix):
+            clean = clean[: -len(suffix)]
+            break
+    return clean.strip()
+
 
 def normalize_emotion(raw: Any) -> str:
     """把任意情绪写法归一为四类之一，未知回落到「平静」。"""
@@ -436,7 +463,8 @@ class MemoryEngine:
                     continue
                 text = str(getattr(turn, "content", "") or "").strip()
                 text = text.rstrip("。！？.!?，,、；;")
-                if text:
+                text = _strip_smalltalk(text)
+                if text and len(text) >= 6:
                     hooks.append({"kind": "recent", "text": text[:24], "detail": "刚才说的话"})
                 break
         return hooks[: max(1, limit + 3)]

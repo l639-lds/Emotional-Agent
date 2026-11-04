@@ -14,6 +14,7 @@ from typing import Any, Iterable
 import streamlit as st
 
 from core import config as cfg
+from ui import avatars
 
 _CSS = """
 <style>
@@ -22,7 +23,8 @@ _CSS = """
 .emo-row-user { justify-content: flex-end; }
 .emo-avatar { width: 40px; height: 40px; flex: 0 0 40px; border-radius: 50%; background: #F1F5F9;
   display: flex; align-items: center; justify-content: center; font-size: 22px; line-height: 1;
-  box-shadow: 0 1px 2px rgba(15,23,42,.12); user-select: none; }
+  box-shadow: 0 1px 2px rgba(15,23,42,.12); user-select: none; overflow: hidden; }
+.emo-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .emo-body { display: flex; flex-direction: column; gap: 4px; max-width: 72%; min-width: 0; }
 .emo-row-user .emo-body { align-items: flex-end; }
 .emo-name { font-size: 12px; color: #64748B; }
@@ -79,7 +81,7 @@ def row_html(message: dict[str, Any], *, role_name: str, role_avatar: str, user_
         f'<div class="emo-row{" emo-row-user" if is_user else ""}">',
     ]
     if not is_user:
-        pieces.append(f'<div class="emo-avatar">{_escape(avatar)}</div>')
+        pieces.append(avatars.html_avatar(avatar))
     pieces.append('<div class="emo-body">')
     header = name if not stamp else f"{name} · {stamp}"
     pieces.append(f'<div class="emo-name">{_escape(header)}</div>')
@@ -88,7 +90,7 @@ def row_html(message: dict[str, Any], *, role_name: str, role_avatar: str, user_
         pieces.append(f'<div class="emo-meta">{_escape(meta)}</div>')
     pieces.append("</div>")
     if is_user:
-        pieces.append(f'<div class="emo-avatar">{_escape(avatar)}</div>')
+        pieces.append(avatars.html_avatar(avatar))
     pieces.append("</div>")
     return "".join(pieces)
 

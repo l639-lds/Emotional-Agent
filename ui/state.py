@@ -16,6 +16,7 @@ from typing import Any, Optional
 import streamlit as st
 
 from core import config as cfg
+from ui import avatars
 from core import demo, llm
 from memory_os import MemoryEngine, MemoryStore
 from persona_forge import card_to_dict, compile_persona, dict_to_card
@@ -66,7 +67,8 @@ def init_session() -> None:
     ss.setdefault("view", "💬 对话")
     ss.setdefault("self_note_seeded", False)
     ss.setdefault("api_key", "")  # 访客自己填的 Key：只活在会话里
-    ss.setdefault("api_key_nonce", 0)  # 密码框的 key 后缀：提交后换一个，等于清空输入框
+    ss.setdefault("api_key_nonce", 0)
+    ss.setdefault("avatar_upload_nonce", 0)  # 密码框的 key 后缀：提交后换一个，等于清空输入框
     for key in ("ab_mid", "ab_long", "ab_mood_gate", "ab_conflict", "ab_auto_consolidate"):
         ss.setdefault(key, True)
 
@@ -194,8 +196,10 @@ def delete_role(name: str) -> bool:
     data = load_role_file()
     if name not in data["roles"]:
         return False
-    data["roles"].pop(name, None)
+    gone = data["roles"].pop(name, None) or {}
     save_role_file(data)
+    if avatars.is_image(gone.get("avatar")):
+        avatars.discard(gone.get("avatar"))  # 角色删了，它的头像图也一起清掉
     return True
 
 
@@ -689,9 +693,38 @@ def api_key_problem() -> str:
 
 def api_key_hint() -> str:
     """API Key / 演示模式状态文案（只显示模式与 Key 指纹，永不回显明文）。"""
-    if llm.is_demo_mode():
+    if llm.is_demo_mode() and not llm.forced_demo():
         return "离线演示模式（本地假模型，全链路可跑）"
     return llm.mode_label()
+
+
+def demo_hint() -> str:
+    """演示模式下的补充说明：什么时候会切回在线、什么时候被强制挡住。"""
+    if not llm.is_demo_mode():
+        return ""
+    if llm.forced_demo():
+        return "服务端用 EMO_DEMO_MODE=1 开了强制离线；你在下面填一个自己的 Key，就会立刻切回在线模型。"
+    return "没有 Key 也能跑通全链路；想用真模型，在下面填一个 Key 即可（只存在你的浏览器会话里）。"
+
+
+def avatar_upload_key() -> str:
+    """文件上传框的 widget key：带 nonce，存完换一个，避免旧文件一直卡在框里。"""
+    return f"user_avatar_upload_{int(st.session_state.get('avatar_upload_nonce', 0) or 0)}"
+
+
+def role_avatar_upload_key(role_name: str) -> str:
+    nonce = int(st.session_state.get("avatar_upload_nonce", 0) or 0)
+    return f"role_avatar_upload_{role_name}_{nonce}"
+
+
+def bump_avatar_upload() -> None:
+    """换上新的上传框 key（值不能直接清，widget 已实例化就不许改）。"""
+    st.session_state["avatar_upload_nonce"] = int(st.session_state.get("avatar_upload_nonce", 0) or 0) + 1
+
+
+def save_avatar_upload(data: bytes, *, kind: str, name: str = "") -> str:
+    """把上传的头像图存到本地并返回 token；失败抛 ``ValueError``（界面自己提示）。"""
+    return avatars.store(data, kind=kind, name=name)
 
 
 def session_key_label() -> str:
@@ -770,16 +803,33 @@ def _save_settings(**patch: Any) -> None:
         pass  # 偏好存不下来也不该影响对话
 
 
+def _clean_avatar(value: Optional[str], *, fallback: str = "") -> str:
+    """头像值统一清洗：图片 token 原样保留，其它（emoji/文字）最多留 4 个字符。"""
+    text = (value or "").strip()
+    if avatars.is_image(text):
+        return text
+    text = text[:4]
+    return text or fallback
+
+
 def user_avatar() -> str:
     """我在对话里的头像：会话里改过就用会话里的，否则用上次保存的偏好。"""
-    value = str(st.session_state.get("user_avatar") or "").strip()
+    value = _clean_avatar(st.session_state.get("user_avatar"))
     if value:
-        return value[:4]
-    return str(_load_settings().get("user_avatar") or DEFAULT_USER_AVATAR)[:4]
+        return value
+    return _clean_avatar(_load_settings().get("user_avatar"), fallback=DEFAULT_USER_AVATAR)
+
+
+def avatar_label(value: Optional[str]) -> str:
+    """给 markdown/caption 用的头像文字：图片就显示 🖼。"""
+    return avatars.display(value)
 
 
 def set_user_avatar(value: str) -> None:
-    value = (value or "").strip()[:4] or DEFAULT_USER_AVATAR
+    value = _clean_avatar(value, fallback=DEFAULT_USER_AVATAR)
+    previous = user_avatar()
+    if previous != value and avatars.is_image(previous):
+        avatars.discard(previous)  # 旧图没人用了，别把 data/avatars 越堆越大
     st.session_state["user_avatar"] = value
     _save_settings(user_avatar=value)
 
@@ -805,7 +855,7 @@ def bump_avatar_input() -> None:
 
 def set_role_avatar(name: str, avatar: str) -> None:
     """改角色的头像（emoji）——内置角色也能改，改完只影响这个角色的气泡。"""
-    avatar = (avatar or "").strip()[:4]
+    avatar = _clean_avatar(avatar)
     if not avatar:
         return
     data = load_role_file()

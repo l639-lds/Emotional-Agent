@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import os
+import re
 
 import pytest
 from streamlit.testing.v1 import AppTest
@@ -33,6 +34,8 @@ def app(tmp_path, monkeypatch):
     monkeypatch.setattr(cfg, "ROLE_FILE", tmp_path / "roles.json", raising=False)
     monkeypatch.setattr(cfg, "CUSTOM_ROLES_FILE", tmp_path / "roles.json", raising=False)
     monkeypatch.setattr(cfg, "ARCHIVE_DIR", tmp_path / "archive", raising=False)
+    monkeypatch.setattr(cfg, "AVATAR_DIR", tmp_path / "avatars", raising=False)
+    monkeypatch.setattr(cfg, "SETTINGS_FILE", tmp_path / "settings.json", raising=False)
     st.cache_resource.clear()
 
     instance = AppTest.from_file("app.py", default_timeout=120)
@@ -316,3 +319,53 @@ def test_persona_coach_dialog_opens_and_asks(app):
     html = _markdown(app)
     assert "深夜还亮着灯的姐姐" in html, "用户说的那句要留在教练的对话记录里"
     assert "TA 开口之前会先停一下吗" in html, "第二问应该换成「说话方式」"
+
+
+def test_coach_view_has_its_own_header_not_the_current_role(app):
+    """人格教练是独立工作台：顶部不该顶着当前角色，也不该显示它的五层计数。"""
+    import ui.state as ui_state
+
+    role_name = app.session_state["role"]
+    next(button for button in app.button if "人格教练" in button.label).click().run()
+    assert not app.exception
+
+    # 只看主区（侧边栏的人设卡里当然还有当前角色，那是另一回事）
+    headers = [block.value for block in app.main.markdown if block.value.strip().startswith("###")]
+    assert any("人格教练" in header for header in headers), headers
+    assert not any(role_name in header for header in headers), f"教练页不该顶着「{role_name}」"
+    captions = [block.value for block in app.main.caption]
+    counts = re.compile(r"L0 原文 \d+ 条")
+    assert not any(counts.search(text) for text in captions), "教练页不该显示角色记忆计数"
+    assert any("访谈进度" in text for text in captions)
+
+    # 教练页的输入不会写进当前角色的记忆
+    before = ui_state.role_thread(role_name)
+    app.text_area[0].set_value("一个总在楼下等我的人").run()
+    next(button for button in app.button if button.label == "回答这一问").click().run()
+    assert not app.exception
+    assert ui_state.role_thread(role_name) == before, "教练访谈不能污染当前角色的对话线程"
+
+
+def test_uploaded_avatar_renders_as_image_in_bubbles(app):
+    """上传的图片头像：会话里只留 token，气泡里渲染成 <img>，emoji 头像不受影响。"""
+    import base64
+
+    import ui.state as ui_state
+    from ui import avatars
+
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8AAAwAB/AF+p0hRAAAAAElFTkSuQmCC"
+    )
+    token = ui_state.save_avatar_upload(png, kind="user")
+    ui_state.set_user_avatar(token)
+    assert ui_state.user_avatar() == token, "图片 token 不能被当成 emoji 截成 4 个字"
+    assert ui_state.avatar_label(token) == avatars.PLACEHOLDER
+
+    app.run()
+    _say(app, "我叫小林，最近在准备面试")
+    rendered = _markdown(app)
+    assert "data:image/png;base64," in rendered and "<img" in rendered
+
+    ui_state.set_user_avatar("🐱")
+    assert ui_state.user_avatar() == "🐱"
+    assert avatars.path_of(token) is None, "换掉图片头像后旧文件应该被清理"

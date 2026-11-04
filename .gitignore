@@ -29,6 +29,7 @@ data/memory.json
 data/custom_roles.json
 data/settings.json
 data/archive/
+data/avatars/
 data/*.tmp
 data/*.backup.json
 

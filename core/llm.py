@@ -139,20 +139,32 @@ def _get_client() -> OpenAI:
     return _client(api_key)
 
 
+def forced_demo() -> bool:
+    """服务端是否显式打开了 ``EMO_DEMO_MODE=1``（答辩兜底用）。"""
+    return os.getenv("EMO_DEMO_MODE", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def is_demo_mode() -> bool:
-    """离线演示模式：显式开启，或没有 API Key 时自动开启。"""
-    flag = os.getenv("EMO_DEMO_MODE", "").strip().lower()
-    if flag in {"1", "true", "yes", "on"}:
-        return True
-    if flag in {"0", "false", "no", "off"}:
+    """离线演示模式：这个会话没填 Key，且（服务端强制 或 没有任何可用 Key）。
+
+    优先级：**访客本会话填的 Key 最高**。他愿意用自己的 Key 就是想用真模型，
+    不该被部署方启动时的 ``EMO_DEMO_MODE=1`` 挡住——那个开关的语义是
+    "没人填 Key 时用本地假模型兜底"，不是"禁止联网"。
+    """
+    own = session_api_key()
+    if own and not key_looks_placeholder(own):
         return False
+    if forced_demo():
+        return True
     return not configured()
 
 
 def mode_label() -> str:
     """给 UI 显示的模式名（含 Key 指纹与来源，但不回显明文）。"""
     if is_demo_mode():
-        return "离线演示模式（无需 API Key）"
+        if forced_demo():
+            return "离线演示模式（EMO_DEMO_MODE=1 强制；在本页填一个 Key 就会切回在线）"
+        return "离线演示模式（还没填 Key，本地假模型全链路可跑）"
     source = "本会话" if key_source() == "session" else "服务端"
     return f"在线模型 {DEEPSEEK_MODEL} · {source} Key {key_fingerprint()}"
 

@@ -165,6 +165,15 @@ def test_proactive_openers_are_distinct(engine):
         assert len(set(openers)) == len(openers)
 
 
+def test_proactive_opener_does_not_parrot_a_greeting(engine):
+    """主动开口不能把「你好呀，我叫小林」整句塞进引号里当话题。"""
+    engine.record_turn(ROLE, "你好呀，我叫小林", "哎，孩子，坐下说。", "平静")
+    openers = engine.proactive_openers(ROLE)
+    assert openers, "至少要给一句兜底开场白"
+    joined = "".join(openers)
+    assert "你好呀" not in joined, f"寒暄不该被当成话题：{joined}"
+
+
 def test_auto_consolidate_switch_off(engine, monkeypatch):
     """消融开关 auto_consolidate=False：只攒 working turns，不自动固化。"""
     engine.config.auto_consolidate = False

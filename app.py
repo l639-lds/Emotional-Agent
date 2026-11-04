@@ -12,14 +12,45 @@ import streamlit as st
 from core import config as cfg
 from core import llm
 from memory_os import DEFAULT_OPENER as FALLBACK_OPENER
-from ui import chat, forge, panels, state
+from ui import avatars, chat, forge, panels, state
 
 USER_AVATAR = "🙂"  # 默认头像；真实值来自侧边栏「我的样子」
 VIEW_CHAT = "💬 对话"
 VIEW_MEMORY = "🧠 记忆舱"
 VIEW_LAB = "🧪 实验室"
 VIEW_COACH = "🧭 人格教练"
+
+
+def _reset_turn_state() -> None:
+    """清空记忆后，把"上一轮/待回复/重试"这些一次性状态一起抹掉，免得指向已删的记忆。"""
+    st.session_state["last_turn"] = None
+    st.session_state["retry"] = None
+    st.session_state["pending_turn"] = None
+
+
+def _render_memory_maintenance(role_name: str, names: list[str]) -> None:
+    """侧边栏「记忆维护」：清空当前/全部角色记忆，删除自定义角色。"""
+    st.caption(f"当前引擎：{llm.mode_label()}")
+    if st.button("清空当前角色记忆", use_container_width=True):
+        state.reset_role_memory(role_name)
+        _reset_turn_state()
+        state.flash(f"已清空「{role_name}」的记忆与对话")
+        st.rerun()
+    if st.button("清空全部角色记忆", use_container_width=True):
+        state.reset_everything()
+        _reset_turn_state()
+        state.flash("已清空全部角色记忆")
+        st.rerun()
+    custom = [name for name in names if name not in state.DEFAULT_ROLE_RAW]
+    if custom:
+        victim = st.selectbox("删除自定义角色", custom, index=0)
+        if st.button("删除该角色", use_container_width=True):
+            state.delete_role(victim)
+            if victim == role_name:
+                st.session_state["role"] = names[0]
+            st.rerun()
 _SHORT_TIER = {"short": "短期", "mid": "中期", "long": "长期"}
+
 
 st.set_page_config(
     page_title="EmoMem · 情感陪伴",
@@ -78,6 +109,9 @@ with st.sidebar:
     st.divider()
     if llm.is_demo_mode():
         st.warning(state.api_key_hint(), icon="🎬")
+        _demo_hint = state.demo_hint()
+        if _demo_hint:
+            st.caption(_demo_hint)
     else:
         st.success(state.api_key_hint(), icon="🔌")
     _key_problem = state.api_key_problem()
@@ -114,7 +148,13 @@ with st.sidebar:
                 st.rerun()
 
     st.divider()
-    picked = st.selectbox("当前角色", names, index=names.index(role_name))
+    if view == VIEW_COACH:
+        # 教练页是独立工作台：别让"当前角色"看起来像这次访谈的对象
+        st.caption(
+            f"🧭 正在建一个新角色——不会动「{role_name}」的记忆。"
+            "建完回到「💬 对话」就会多一个角色可选。"
+        )
+    picked = st.selectbox("当前角色", names, index=names.index(role_name), disabled=(view == VIEW_COACH))
     if picked != role_name:
         st.session_state["role"] = picked
         st.session_state["last_turn"] = None
@@ -130,14 +170,24 @@ with st.sidebar:
 
     with st.expander("我的样子（头像）", expanded=False):
         st.caption("头像只影响你自己在对话里的样子，不会写进角色卡。")
+        # 当前是图片头像时，把「🖼 当前这张图」也放进选项里：既能让控件始终有合法取值，
+        # 也能让人一眼看出"我现在用的是图，不是 emoji"。
+        _current_avatar = state.user_avatar()
+        _avatar_image = avatars.is_image(_current_avatar)
+        _avatar_options = list(state.AVATAR_PRESETS) + ([avatars.PLACEHOLDER] if _avatar_image else [])
+        _avatar_default = (
+            avatars.PLACEHOLDER
+            if _avatar_image
+            else (_current_avatar if _current_avatar in state.AVATAR_PRESETS else state.AVATAR_PRESETS[0])
+        )
         _picked_avatar = st.pills(
             "选一个",
-            state.AVATAR_PRESETS,
-            default=state.user_avatar() if state.user_avatar() in state.AVATAR_PRESETS else None,
+            _avatar_options,
+            default=_avatar_default,
             key="user_avatar_pills",
             label_visibility="collapsed",
         )
-        if _picked_avatar and _picked_avatar != state.user_avatar():
+        if _picked_avatar and _picked_avatar != avatars.PLACEHOLDER and _picked_avatar != _current_avatar:
             state.set_user_avatar(_picked_avatar)
             st.rerun()
         _avatar_col, _avatar_btn = st.columns([2, 1])
@@ -152,7 +202,21 @@ with st.sidebar:
             state.set_user_avatar(_custom_avatar)
             state.bump_avatar_input()  # 换掉输入框，避免旧值残留
             st.rerun()
-        st.caption(f"现在的你：{state.user_avatar()}")
+        _upload = st.file_uploader(
+            "或者上传一张图片当我的头像",
+            type=["png", "jpg", "jpeg", "webp", "gif"],
+            key=state.avatar_upload_key(),
+            help=f"会缩到 {cfg.AVATAR_PX}px 存成本地文件（{cfg.AVATAR_DIR.name}/，不进仓库、不上传）。",
+        )
+        if _upload is not None:
+            try:
+                state.set_user_avatar(state.save_avatar_upload(_upload.getvalue(), kind="user"))
+            except ValueError as exc:
+                st.error(str(exc))
+            else:
+                state.bump_avatar_upload()
+                st.rerun()
+        st.caption(f"现在的你：{state.avatar_label(state.user_avatar())}")
 
     with st.expander("主动关怀（TA 要不要先开口）", expanded=False):
         st.caption(
@@ -172,32 +236,29 @@ with st.sidebar:
         if _role_avatar_btn.button("换头像", use_container_width=True):
             state.set_role_avatar(role_name, _role_avatar)
             st.rerun()
+        _role_upload = st.file_uploader(
+            "或者上传一张图片当 TA 的头像",
+            type=["png", "jpg", "jpeg", "webp", "gif"],
+            key=state.role_avatar_upload_key(role_name),
+            help="同「我的头像」：缩到 96px 存本地，删掉角色时一并清理。",
+        )
+        if _role_upload is not None:
+            try:
+                state.set_role_avatar(
+                    role_name, state.save_avatar_upload(_role_upload.getvalue(), kind="role", name=role_name)
+                )
+            except ValueError as exc:
+                st.error(str(exc))
+            else:
+                state.bump_avatar_upload()
+                st.rerun()
         forge.render_card_preview(card)
 
-    with st.expander("记忆维护", expanded=False):
-        st.caption(f"当前引擎：{llm.mode_label()}")
-        if st.button("清空当前角色记忆", use_container_width=True):
-            state.reset_role_memory(role_name)
-            st.session_state["last_turn"] = None
-            st.session_state["retry"] = None
-            st.session_state["pending_turn"] = None
-            state.flash(f"已清空「{role_name}」的记忆与对话")
-            st.rerun()
-        if st.button("清空全部角色记忆", use_container_width=True):
-            state.reset_everything()
-            st.session_state["last_turn"] = None
-            st.session_state["retry"] = None
-            st.session_state["pending_turn"] = None
-            state.flash("已清空全部角色记忆")
-            st.rerun()
-        custom = [n for n in names if n not in state.DEFAULT_ROLE_RAW]
-        if custom:
-            victim = st.selectbox("删除自定义角色", custom, index=0)
-            if st.button("删除该角色", use_container_width=True):
-                state.delete_role(victim)
-                if victim == role_name:
-                    st.session_state["role"] = names[0]
-                st.rerun()
+    # 教练视图不加载「记忆维护」：那是"清空某个角色"的操作，和正在建的新角色无关，
+    # 摆在那里既让人误解，也容易误点。
+    if view != VIEW_COACH:
+        with st.expander("记忆维护", expanded=False):
+            _render_memory_maintenance(role_name, names)
 
 
 # ---------------------------------------------------------------------------
@@ -205,17 +266,26 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 head_left, head_right = st.columns([3, 2])
 with head_left:
-    st.markdown(f"### {avatar} {role_name}")
-    st.caption(f"关系阶段 **{stage}** · 亲密度 {intimacy:.0f}/100 · 调用模型 {cfg.DEEPSEEK_MODEL}")
+    if view == VIEW_COACH:
+        st.markdown("### 🧭 人格教练")
+        st.caption("五问一步，聊着把角色问出来 · 这是独立的工作台，不读写任何现有角色的记忆")
+    else:
+        st.markdown(f"### {avatars.inline(avatar)} {role_name}", unsafe_allow_html=True)
+        st.caption(f"关系阶段 **{stage}** · 亲密度 {intimacy:.0f}/100 · 调用模型 {cfg.DEEPSEEK_MODEL}")
 with head_right:
-    stat_row = snapshot.get("stats") or {}
-    st.caption(
-        f"L0 原文 {int((snapshot.get('archive') or {}).get('messages', 0) or 0)} 条 · "
-        f"L1 会话 {int(stat_row.get('turns', 0) or 0)} 条 · "
-        f"L2 事实 {int(stat_row.get('facts', 0) or 0)} 条 · "
-        f"L3 快照 {int((snapshot.get('snapshots') or {}).get('count', 0) or 0)} 份 · "
-        f"L4 自述 {int((snapshot.get('self') or {}).get('count', 0) or 0)} 条"
-    )
+    if view == VIEW_COACH:
+        _coach = st.session_state.get("coach") or {}
+        _answered = len(_coach.get("answers") or {})
+        st.caption(f"访谈进度：第 {min(int(_coach.get('index', 0)) + 1, 5)} / 5 问 · 已答 {_answered} 问")
+    else:
+        stat_row = snapshot.get("stats") or {}
+        st.caption(
+            f"L0 原文 {int((snapshot.get('archive') or {}).get('messages', 0) or 0)} 条 · "
+            f"L1 会话 {int(stat_row.get('turns', 0) or 0)} 条 · "
+            f"L2 事实 {int(stat_row.get('facts', 0) or 0)} 条 · "
+            f"L3 快照 {int((snapshot.get('snapshots') or {}).get('count', 0) or 0)} 份 · "
+            f"L4 自述 {int((snapshot.get('self') or {}).get('count', 0) or 0)} 条"
+        )
 
 flash_notes = state.take_flash()  # 本轮的固化提示，直接贴在对话下方，不用浮层挡住聊天
 

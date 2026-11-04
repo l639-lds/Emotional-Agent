@@ -201,14 +201,16 @@ def forge_dialog() -> None:
 
 def render_coach_panel() -> None:
     """人格教练整页（侧边栏第四个视图）：五轮访谈 → 人设速写 → 同一条编译流水线。"""
-    st.markdown("#### 🧭 人格教练")
-    st.caption("想不清「我想要一个什么样的角色」的时候走这条：聊五轮，教练把回答收束成人设速写，再编译。")
+    # 标题由 app.py 的页头给出（教练页有自己的头，不顶着当前角色），这里只留一句说明
+    st.caption(
+        "想不清「我想要一个什么样的角色」的时候走这条：聊五轮，教练把回答收束成人设速写，再编译。"
+        "答得越具体越好——教练会顺着你上一句继续问。"
+    )
     coach = st.session_state.get("coach")
     if not isinstance(coach, dict) or "index" not in coach:
         coach = interview.new_state()
         st.session_state["coach"] = coach
 
-    st.caption("答得越具体越好：教练会顺着你上一句继续问，最后把回答收束成一段人设速写再编译。")
     answered = len([v for v in (coach.get("answers") or {}).values() if str(v).strip()])
     done = bool(coach.get("done"))
     st.progress(
