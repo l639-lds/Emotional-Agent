@@ -1,4 +1,4 @@
-﻿"""app.py 的端到端测试：用 streamlit 官方 AppTest 真跑一遍界面脚本（离线演示模式，不联网）。
+"""app.py 的端到端测试：用 streamlit 官方 AppTest 真跑一遍界面脚本（离线演示模式，不联网）。
 
 覆盖：首次启动无异常 → 连聊 4 轮触发记忆固化 → 切到记忆舱/实验室视图能看到五层记忆 →
 原文库检索能回溯到具体那句话 → 记忆可纠正 → 清空当前角色记忆后回到空状态。
@@ -282,3 +282,37 @@ def test_role_avatar_can_be_changed(app):
     html = _markdown(app)
     assert "🧔" in html
     assert not app.exception
+
+
+def test_user_bubble_is_written_once_and_reply_follows(app):
+    """用户气泡先落盘再等模型：一轮下来只有一条我的气泡、一条 TA 的气泡。"""
+    from ui import state as ui_state
+
+    _say(app, "我叫小林，下周三要去面试")
+    thread = ui_state.role_thread("温柔老父亲")
+    roles = [message["role"] for message in thread]
+    assert roles.count("user") == 1, "用户那句只能写一次（begin_turn 已经写过，finish_turn 不许再写）"
+    assert roles.count("assistant") == 2, "开场白 + 这一轮的回复"
+    html = _markdown(app)
+    assert html.count('class="emo-row emo-row-user"') == 1
+    assert app.session_state["pending_turn"] is None
+
+
+def test_persona_coach_dialog_opens_and_asks(app):
+    """人格教练：点开就会问第一问，答一句后问题往前推进。"""
+    coach_btn = next(button for button in app.button if "人格教练" in button.label)
+    coach_btn.click().run()
+    assert not app.exception
+    html = _markdown(app)
+    assert "先定关系" in html, "第一问应该落到「关系」上"
+
+    answer = app.text_area[0]
+    answer.set_value("住对门、总在深夜还亮着灯的姐姐").run()
+    next(button for button in app.button if button.label == "回答这一问").click().run()
+    assert not app.exception
+    coach = app.session_state["coach"]
+    assert coach["index"] == 1, "答完一问应该推进到下一问"
+    assert coach["answers"]["relation"].startswith("住对门")
+    html = _markdown(app)
+    assert "深夜还亮着灯的姐姐" in html, "用户说的那句要留在教练的对话记录里"
+    assert "TA 开口之前会先停一下吗" in html, "第二问应该换成「说话方式」"

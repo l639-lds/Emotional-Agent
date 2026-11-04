@@ -1,4 +1,4 @@
-﻿"""人设锻造炉：把一句描述编译成结构化人设卡的人机界面。"""
+"""人设锻造炉：把一句描述编译成结构化人设卡的人机界面。"""
 
 from __future__ import annotations
 
@@ -7,9 +7,9 @@ from typing import Any
 import streamlit as st
 
 from core import config as cfg
-from persona_forge import compile_persona
+from persona_forge import compile_persona, interview
 from persona_forge.schema import Critique, HealthReport, PersonaCard
-from ui import state
+from ui import chat, state
 
 _DIM_ORDER = ("可执行性", "一致性", "差异化", "情感深度", "安全性", "可演示性")
 
@@ -196,5 +196,132 @@ def forge_dialog() -> None:
         st.rerun()
     if cols[1].button("丢弃结果", use_container_width=True):
         st.session_state["forge_result"] = None
+        st.rerun()
+
+
+def render_coach_panel() -> None:
+    """人格教练整页（侧边栏第四个视图）：五轮访谈 → 人设速写 → 同一条编译流水线。"""
+    st.markdown("#### 🧭 人格教练")
+    st.caption("想不清「我想要一个什么样的角色」的时候走这条：聊五轮，教练把回答收束成人设速写，再编译。")
+    coach = st.session_state.get("coach")
+    if not isinstance(coach, dict) or "index" not in coach:
+        coach = interview.new_state()
+        st.session_state["coach"] = coach
+
+    st.caption("答得越具体越好：教练会顺着你上一句继续问，最后把回答收束成一段人设速写再编译。")
+    answered = len([v for v in (coach.get("answers") or {}).values() if str(v).strip()])
+    done = bool(coach.get("done"))
+    st.progress(
+        1.0 if done else min(1.0, answered / len(interview.STAGES)),
+        text=f"{interview.progress_text(coach)} · 已答 {answered} 问"
+        + ("（已收束）" if done else ""),
+    )
+
+    if not done and not str(coach.get("question") or "").strip():
+        with st.spinner("教练在想下一个问题……"):
+            interview.ask_question(coach)
+
+    turns = [
+        {"role": str(t.get("role") or "assistant"), "content": str(t.get("content") or "")}
+        for t in (coach.get("turns") or [])
+    ]
+    if turns:
+        chat.render_thread(
+            turns,
+            role_name=interview.COACH_NAME,
+            role_avatar=interview.COACH_AVATAR,
+            user_avatar=state.user_avatar(),
+        )
+
+    if not done:
+        stage = interview.stage_at(int(coach.get("index") or 0)) or {}
+        st.caption(f"💡 {stage.get('hint', '')}")
+        answer = st.text_area(
+            "你的回答",
+            key=f"coach_answer_{coach.get('index')}_{len(turns)}",
+            height=90,
+            placeholder=str(stage.get("placeholder", "")),
+        )
+        col_ok, col_skip, col_reset = st.columns([2, 1, 1])
+        if col_ok.button(
+            "回答这一问", type="primary", use_container_width=True, disabled=not answer.strip()
+        ):
+            interview.take_answer(coach, answer)
+            st.session_state["coach"] = coach
+            st.rerun()
+        if col_skip.button("跳过", use_container_width=True):
+            interview.skip_stage(coach)
+            st.session_state["coach"] = coach
+            st.rerun()
+        if col_reset.button("重新开始", use_container_width=True):
+            st.session_state["coach"] = interview.new_state()
+            st.session_state["coach_result"] = None
+            st.rerun()
+        return
+
+    result = st.session_state.get("coach_result")
+    if result is None:
+        with st.spinner("教练在整理人设速写，然后编译 → 自评 → 体检……"):
+            composed = interview.compose(coach)
+            knobs = {
+                knob: float((composed.get("knobs") or {}).get(knob, 0.5)) for knob in cfg.PERSONA_KNOBS
+            }
+            coach["knobs_used"] = knobs
+            st.session_state["coach"] = coach
+            st.session_state["coach_brief"] = composed["brief"]
+            try:
+                result = compile_persona(composed["brief"], knobs=knobs)
+            except Exception as exc:  # 编译器内部已降级，这里只防意外
+                st.error(f"编译失败：{exc}")
+                return
+            st.session_state["coach_result"] = result
+
+    card = _get(result, "card", None)
+    if card is None:
+        st.error("编译器没有返回人设卡。")
+        return
+
+    brief = str(st.session_state.get("coach_brief") or coach.get("brief") or "")
+    with st.expander("访谈收束成的人设速写（编译器的输入）", expanded=False):
+        st.markdown(brief or "（空）")
+
+    st.divider()
+    tabs = st.tabs(["人设卡", "自评与体检", "编译轨迹"])
+    with tabs[0]:
+        render_card_preview(card)
+    with tabs[1]:
+        _critique_block(_get(result, "critique", {}) or {})
+        _health_block(_get(result, "health", {}) or {})
+    with tabs[2]:
+        for step in _as_list(_get(result, "steps", [])):
+            st.caption(f"· {step}")
+
+    st.divider()
+    default_name = str(_get(card, "name") or coach.get("name_hint") or "新角色")[:20]
+    name = st.text_input("保存为角色名", value=default_name, key="coach_save_name")
+    avatar = st.text_input(
+        "头像 emoji", value=str(_get(card, "avatar") or "🎭")[:4], key="coach_save_avatar"
+    )
+    raw_scores = _get(_get(result, "critique", None) or {}, "scores", {}) or {}
+    values = [int(v or 0) for v in raw_scores.values()] if isinstance(raw_scores, dict) else []
+    avg_score = int(sum(values) / len(values)) if values else None
+    knobs = coach.get("knobs_used") or {}
+    cols = st.columns(3)
+    if cols[0].button("保存并开始聊天", type="primary", use_container_width=True, disabled=not name.strip()):
+        card.name = name.strip()
+        card.avatar = avatar.strip() or "🎭"
+        state.save_forged_role(name.strip(), card, knobs=knobs, score=avg_score)
+        st.session_state["role"] = name.strip()
+        st.session_state["coach"] = interview.new_state()
+        st.session_state["coach_result"] = None
+        state.flash(f"已保存角色「{name.strip()}」，可以开始聊天了")
+        st.session_state["pending_view"] = "💬 对话"
+        st.rerun()
+    if cols[1].button("重新聊一次", use_container_width=True):
+        st.session_state["coach"] = interview.new_state()
+        st.session_state["coach_result"] = None
+        st.rerun()
+    if cols[2].button("关掉", use_container_width=True):
+        st.session_state["coach_result"] = None
         st.rerun()
 

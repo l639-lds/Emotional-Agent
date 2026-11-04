@@ -1,4 +1,4 @@
-﻿"""UI 状态层：角色 / 人设卡 / 记忆引擎的装配与持久化。
+"""UI 状态层：角色 / 人设卡 / 记忆引擎的装配与持久化。
 
 这一层只做数据搬运与流程编排，不渲染任何视觉组件，便于单独测试与复用。
 所有「写盘」都走原子写；所有 LLM 调用都经 :mod:`core.llm` 或组件包内部。
@@ -60,7 +60,9 @@ def init_session() -> None:
     ss.setdefault("flash", [])
     ss.setdefault("retry", None)
     ss.setdefault("last_turn", None)
+    ss.setdefault("pending_turn", None)  # 用户已上屏、还没拿到回复的那一句
     ss.setdefault("forge_result", None)
+    ss.setdefault("coach", None)  # 人格教练的对话进度
     ss.setdefault("view", "💬 对话")
     ss.setdefault("self_note_seeded", False)
     ss.setdefault("api_key", "")  # 访客自己填的 Key：只活在会话里
@@ -537,8 +539,29 @@ def correct_fact(role: str, fact_id: str, new_content: str, *, category: Optiona
 # ---------------------------------------------------------------------------
 
 
-def chat_once(role_name: str, user_text: str) -> dict[str, Any]:
-    """跑完一轮：检索 → 拼 Prompt → 调模型 → 落盘 → 写回记忆。
+def begin_turn(role_name: str, user_text: str) -> str:
+    """先把用户这一句落盘，让气泡立刻上屏（不用等模型想完）。返回情绪先验。"""
+    est_emotion = demo.detect_emotion(user_text)
+    append_chat(role_name, "user", user_text, emotion=est_emotion)
+    return est_emotion
+
+
+def _user_tail_pending(role_name: str, user_text: str) -> bool:
+    """用户这句是否已经写进对话线程（即 begin_turn 已经走过）。"""
+    thread = role_thread(role_name)
+    if not thread:
+        return False
+    last = thread[-1]
+    return last.get("role") == "user" and str(last.get("content") or "").strip() == user_text.strip()
+
+
+def finish_turn(
+    role_name: str,
+    user_text: str,
+    *,
+    est_emotion: Optional[str] = None,
+) -> dict[str, Any]:
+    """模型这一侧：检索 → 拼 Prompt → 调模型 → 写记忆 → 落下 TA 的回复。
 
     Raises:
         core.llm.LLMError: 模型调用失败时抛出，由 UI 层展示重试入口。
@@ -547,7 +570,8 @@ def chat_once(role_name: str, user_text: str) -> dict[str, Any]:
     card = get_card(role_name)
 
     # 用户情绪先验：本地关键词判定，既服务检索门控，也用于气泡配色
-    est_emotion = demo.detect_emotion(user_text)
+    est_emotion = est_emotion or demo.detect_emotion(user_text)
+    already_written = _user_tail_pending(role_name, user_text)
     # L4 自我认知只在会话首轮注入：每轮都灌就变成「别人每隔十秒告诉你你是谁」
     include_self = self_note_pending(role_name)
     try:
@@ -575,12 +599,14 @@ def chat_once(role_name: str, user_text: str) -> dict[str, Any]:
     nickname = getattr(relationship, "nickname", None)
     system_prompt = build_system_prompt(card, memory_block, stage, nickname)
 
-    history = [
+    thread = [
         {"role": m["role"], "content": m["content"]}
-        for m in role_thread(role_name)[-cfg.SHORT_TERM_INJECT_TURNS:]
-        if m.get("role") in {"user", "assistant"}
+        for m in role_thread(role_name)
+        if m.get("role") in {"user", "assistant"} and str(m.get("content") or "").strip()
     ]
-    history.append({"role": "user", "content": user_text})
+    if not already_written:  # 界面走 begin_turn 时这句已经在线程里，重复追加会让模型看到两遍
+        thread.append({"role": "user", "content": user_text})
+    history = thread[-cfg.SHORT_TERM_INJECT_TURNS:]
 
     raw = llm.structured_chat(system_prompt, history)
     reply = str(raw.get("reply") or "").strip()
@@ -594,15 +620,25 @@ def chat_once(role_name: str, user_text: str) -> dict[str, Any]:
 
     # 先写记忆（engine 会整份 load/save），再写对话线程，否则 chats 会被记忆写入覆盖
     engine.record_turn(role_name, user_text, reply, emotion)
-    append_exchange(
-        role_name,
-        user_text,
-        est_emotion,
-        reply,
-        initiative=initiative,
-        loop_hint=loop_hint,
-        memory_update=memory_update,
-    )
+    if already_written:  # 用户气泡已经上屏了，这里只补 TA 的回复
+        append_chat(
+            role_name,
+            "assistant",
+            reply,
+            initiative=initiative,
+            loop_hint=loop_hint,
+            memory_update=memory_update,
+        )
+    else:
+        append_exchange(
+            role_name,
+            user_text,
+            est_emotion,
+            reply,
+            initiative=initiative,
+            loop_hint=loop_hint,
+            memory_update=memory_update,
+        )
 
     consolidation = getattr(engine, "last_consolidation", None)
     notes = list(getattr(consolidation, "notes", []) or []) if consolidation is not None else []
@@ -620,6 +656,12 @@ def chat_once(role_name: str, user_text: str) -> dict[str, Any]:
         "notes": notes,
         "self_note_used": include_self,
     }
+
+
+def chat_once(role_name: str, user_text: str) -> dict[str, Any]:
+    """一步跑完一轮（脚本与测试用；界面走 begin_turn + finish_turn 两段，让气泡先上屏）。"""
+    est_emotion = begin_turn(role_name, user_text)
+    return finish_turn(role_name, user_text, est_emotion=est_emotion)
 
 
 def compile_and_preview(description: str, knobs: dict[str, float]) -> Any:

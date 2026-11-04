@@ -1,4 +1,4 @@
-﻿"""EmoMem · 情感陪伴 Agent（Streamlit 入口）。
+"""EmoMem · 情感陪伴 Agent（Streamlit 入口）。
 
 本文件只负责界面编排：侧边栏（角色 / 人设 / 运行模式）＋ 三个视图
 （💬 对话 / 🧠 记忆舱 / 🧪 实验室）。业务逻辑分别在 `memory_os`（五层记忆）、
@@ -18,6 +18,7 @@ USER_AVATAR = "🙂"  # 默认头像；真实值来自侧边栏「我的样子�
 VIEW_CHAT = "💬 对话"
 VIEW_MEMORY = "🧠 记忆舱"
 VIEW_LAB = "🧪 实验室"
+VIEW_COACH = "🧭 人格教练"
 _SHORT_TIER = {"short": "短期", "mid": "中期", "long": "长期"}
 
 st.set_page_config(
@@ -57,13 +58,18 @@ avatar = state.avatar_for(role_name, card, role_file)
 # ---------------------------------------------------------------------------
 # 侧边栏
 # ---------------------------------------------------------------------------
+pending_view = st.session_state.pop("pending_view", None)
+if pending_view:  # 别的组件想跳视图时用它：直接改 key="view" 会因为 widget 已实例化而报错
+    st.session_state["view"] = pending_view
+
+
 with st.sidebar:
     st.title("🧠 EmoMem")
     st.caption("五层记忆 · 人设编译器")
 
     view = st.radio(
         "视图",
-        [VIEW_CHAT, VIEW_MEMORY, VIEW_LAB],
+        [VIEW_CHAT, VIEW_MEMORY, VIEW_LAB, VIEW_COACH],
         index=0,
         label_visibility="collapsed",
         key="view",
@@ -112,11 +118,15 @@ with st.sidebar:
     if picked != role_name:
         st.session_state["role"] = picked
         st.session_state["last_turn"] = None
+        st.session_state["pending_turn"] = None
         st.session_state["self_note_seeded"] = False
         st.rerun()
 
     if st.button("⚒ 锻造新角色", use_container_width=True, type="primary"):
         forge.forge_dialog()
+    if st.button("🧭 和人格教练聊着建角色", use_container_width=True):
+        st.session_state["pending_view"] = VIEW_COACH
+        st.rerun()
 
     with st.expander("我的样子（头像）", expanded=False):
         st.caption("头像只影响你自己在对话里的样子，不会写进角色卡。")
@@ -170,12 +180,14 @@ with st.sidebar:
             state.reset_role_memory(role_name)
             st.session_state["last_turn"] = None
             st.session_state["retry"] = None
+            st.session_state["pending_turn"] = None
             state.flash(f"已清空「{role_name}」的记忆与对话")
             st.rerun()
         if st.button("清空全部角色记忆", use_container_width=True):
             state.reset_everything()
             st.session_state["last_turn"] = None
             st.session_state["retry"] = None
+            st.session_state["pending_turn"] = None
             state.flash("已清空全部角色记忆")
             st.rerun()
         custom = [n for n in names if n not in state.DEFAULT_ROLE_RAW]
@@ -221,14 +233,15 @@ if view == VIEW_CHAT:
     )
     if flash_notes:
         _notes = " · ".join(note if len(note) <= 26 else note[:26] + "…" for note in flash_notes[:2])
-        st.caption(f"🧠 本轮记忆更新：{_notes}")
+        st.caption(f"🧠 {_notes}")
 
     retry = st.session_state.get("retry")
     if retry:
         st.error(f"这一轮失败了：{retry.get('error')}")
         if st.button("重试这一句", type="primary"):
             try:
-                st.session_state["last_turn"] = state.chat_once(role_name, retry["text"])
+                # 用户那句早就上屏了，这里只重跑"模型这一侧"
+                st.session_state["last_turn"] = state.finish_turn(role_name, retry["text"])
                 st.session_state["retry"] = None
             except llm.LLMError as exc:
                 st.session_state["retry"] = {"text": retry["text"], "error": str(exc)}
@@ -249,17 +262,34 @@ if view == VIEW_CHAT:
                 state.append_chat(role_name, "assistant", openers[0], initiative=openers[0])
                 st.rerun()
 
+    # 用户那句已经落盘、上一帧已经画出来了；这一帧再让 TA 想，气泡随后单独出现
+    pending = st.session_state.get("pending_turn")
+    if pending:
+        st.session_state["pending_turn"] = None
+        if pending.get("role") != role_name:  # 中途换角色就丢掉，别串台
+            st.rerun()
+        with st.spinner(f"{role_name} 正在回忆……"):
+            try:
+                st.session_state["last_turn"] = state.finish_turn(
+                    role_name, pending["text"], est_emotion=pending.get("est_emotion")
+                )
+            except llm.LLMError as exc:
+                st.session_state["retry"] = {"text": pending["text"], "error": str(exc)}
+            else:
+                for note in st.session_state["last_turn"].get("notes") or []:
+                    state.flash(note)
+        st.rerun()
+
     prompt = st.chat_input(f"和{role_name}说点什么…")
     if prompt:
         st.session_state["retry"] = None
-        try:
-            with st.spinner("TA 正在回忆……"):
-                st.session_state["last_turn"] = state.chat_once(role_name, prompt)
-        except llm.LLMError as exc:
-            st.session_state["retry"] = {"text": prompt, "error": str(exc)}
-        else:
-            for note in st.session_state["last_turn"].get("notes") or []:
-                state.flash(note)
+        # ① 先只写用户这一句：rerun 之后气泡立刻出现，不用等模型
+        est_emotion = state.begin_turn(role_name, prompt)
+        st.session_state["pending_turn"] = {
+            "role": role_name,
+            "text": prompt,
+            "est_emotion": est_emotion,
+        }
         st.rerun()
 
     last_turn = st.session_state.get("last_turn") or {}
@@ -329,6 +359,12 @@ if view == VIEW_LAB:
         st.divider()
         panels.render_self_notes(snapshot)
         st.caption("自我认知本轮是否已注入：" + ("是" if st.session_state.get("self_note_seeded") else "否"))
+
+# ---------------------------------------------------------------------------
+# 视图四：人格教练（聊着把人设问出来）
+# ---------------------------------------------------------------------------
+if view == VIEW_COACH:
+    forge.render_coach_panel()
 
 st.divider()
 st.caption(

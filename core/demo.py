@@ -1,4 +1,4 @@
-﻿"""离线演示模式：不联网也能跑通「三层记忆 + 人设编译器」全链路。
+"""离线演示模式：不联网也能跑通「三层记忆 + 人设编译器」全链路。
 
 当没有 `DEEPSEEK_API_KEY`（或显式设置 `EMO_DEMO_MODE=1`）时，
 :mod:`core.llm` 会把所有结构化调用分流到这里，用**确定性启发式**伪造模型输出。
@@ -474,6 +474,60 @@ def _resolve_name(description: str, hinted: str = "") -> str:
     return "小满"
 
 
+_INTERVIEW_DEMO_QUESTIONS: dict[str, str] = {
+    "relation": "先定关系：TA 是你生活里的谁？每天都会见到，还是只在某些时刻才出现？",
+    "speech": "TA 开口之前会先停一下吗？一句话通常多长，爱用问句还是陈述句？",
+    "emotion": "你难受的那天，TA 做的第一件事是什么——说话，还是别的动作？",
+    "boundary": "TA 说过哪句话，让你心里一沉、之后都不想再听第二遍？",
+    "spark": "有没有一个小细节只有你会注意到：TA 什么时候会摸鼻子、清嗓子，或者看向窗外？",
+}
+
+
+def _interview_question(stage: dict[str, Any], answers: dict[str, Any]) -> str:
+    """演示模式下的人格教练提问：按阶段取值，并用上一句回答做"接话"。"""
+    key = str((stage or {}).get("key") or "")
+    base = str((stage or {}).get("question") or "").strip()
+    question = _INTERVIEW_DEMO_QUESTIONS.get(key) or base or "再多说一点：TA 最在意的是什么？"
+    filled = [str(v).strip() for v in (answers or {}).values() if str(v).strip()]
+    if filled:
+        last = filled[-1]
+        stem = last[:12] + ("…" if len(last) > 12 else "")
+        return f"「{stem}」我记下了。{question}"
+    return question
+
+
+def _persona_brief(answers: dict[str, Any]) -> dict[str, Any]:
+    """演示模式下把访谈收束成人设速写（模板拼装，仍保留用户原话）。"""
+    def get(key: str) -> str:
+        return str((answers or {}).get(key) or "").strip()
+
+    parts = [f"你是{get('relation')}。" if get("relation") else "你是用户身边一个熟悉的人。"]
+    if get("speech"):
+        parts.append(f"你说话是这样的：{get('speech')}。")
+    if get("emotion"):
+        parts.append(f"对方难受的时候，你会{get('emotion')}。")
+    if get("boundary"):
+        parts.append(f"有些话你不会说，比如{get('boundary')}。")
+    if get("spark"):
+        parts.append(f"你身上有个只属于你的细节：{get('spark')}。")
+    relation = get("relation")
+    if "警" in relation or "退" in relation or "摊" in relation:
+        name = "老陈"
+    elif "姐" in relation or "哥" in relation:
+        name = "阿岚"
+    elif "猫" in relation or "狗" in relation:
+        name = "阿团"
+    else:
+        name = "小满"
+    knobs = {
+        "毒舌": 0.7 if ("骂" in get("boundary") or "别劝" in get("boundary")) else 0.35,
+        "温柔": 0.75 if get("emotion") else 0.5,
+        "话痨": 0.3 if "少" in get("speech") else 0.5,
+        "神秘": 0.6 if ("夜" in relation or "不说" in relation) else 0.4,
+    }
+    return {"brief": "".join(parts), "name_hint": name, "knobs": knobs}
+
+
 def _persona_seed(description: str, knobs: dict[str, float] | None = None) -> dict[str, Any]:
     """按描述挑一个模板，再按旋钮做轻度改写（演示模式的人设生成）。"""
     text = (description or "").strip()
@@ -613,6 +667,12 @@ def fake_json(
                 "reason": "未闭环事件回访",
             }
         return {"opener": "今天过得怎么样？", "reason": "没有可参考的素材，使用日常开场"}
+
+    if purpose == "persona_interview":
+        return {"question": _interview_question(context.get("stage") or {}, context.get("answers") or {})}
+
+    if purpose == "persona_brief":
+        return _persona_brief(context.get("answers") or {})
 
     if purpose == "persona_seed":
         return _persona_seed(context.get("description", user_prompt), context.get("knobs"))

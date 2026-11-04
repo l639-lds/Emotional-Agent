@@ -46,8 +46,16 @@ persona_forge/prompts.py    persona    元 Prompt（生成/自评/重写/体检�
 persona_forge/compiler.py   persona    生成→自评→重写→体检 编排
 persona_forge/healthcheck.py persona   3 问人设体检（LLM 探针 + 离线规则兜底）
 persona_forge/render.py     persona    渲染人设 Prompt 段落 + 关系阶段漂移指令
+persona_forge/interview.py  Lead       人格教练：五问元 Prompt + 回答收束成人设速写（v4 新增）
 persona_forge/legacy.py     persona    v1 旧角色（persona/opening 字符串）兼容包装
 tests/test_persona_forge.py persona    pytest，全部离线、确定性
+tests/test_interview.py     Lead       人格教练的状态机 / 收束 / 降级测试
+ui/state.py                 Lead       会话状态、角色文件、引擎装配、两段式单轮（begin/finish）
+ui/chat.py                  Lead       对话气泡渲染（自己靠右、TA 靠左，HTML 转义后自绘）
+ui/panels.py                Lead       五层面板 / Trace / 关系 / 消融 / 记忆纠正
+ui/forge.py                 Lead       锻造炉对话框 + 人格教练整页
+tests/test_integration.py   Lead       跨模块契约（记忆 ↔ 人设 ↔ UI 状态层）
+tests/test_app.py           Lead       Streamlit AppTest 端到端（含按钮点击链路）
 docs/poster/*               poster     A2 海报（html/pdf/png）
 docs/答辩稿.md / .docx        poster     一页答辩稿
 ```
@@ -494,3 +502,25 @@ build_memory_block(bundle, *, include_self=False) -> str
 - `correct_fact` 在 `ui/state.py` 内直接读改写 `store`，**不依赖** `engine.correct_fact`（两层实现互不阻塞，行为一致）。
 - 删除/纠正后必须 `state.flash(...)` + `st.rerun()`；按钮 key 分别为 `forget_{tier}_{id}` / `correct_{tier}_{id}`（避免重复 key）。
 - 清空记忆（`reset_role_memory` / `reset_everything`）必须同时把 `st.session_state["self_note_seeded"]` 置回 `False`。
+
+## 10. 两段式单轮 + 人格教练（v4.1 新增）
+
+### 10.1 一轮拆两段（`ui/state.py`）
+
+| 函数 | 契约 |
+|---|---|
+| `begin_turn(role, user_text) -> str` | 只写用户那一条（`append_chat(role,"user",text,emotion=demo.detect_emotion(text))`），返回情绪先验；调用方随后立刻 `st.rerun()` 让气泡上屏 |
+| `finish_turn(role, user_text, *, est_emotion=None) -> dict` | 取历史 → `retrieve` → `build_memory_block` → `build_system_prompt` → `structured_chat` → `record_turn` → 落盘；若 `_user_tail_pending()` 为真，**只追加 assistant 一条**，否则退回 `append_exchange` 写两条 |
+| `chat_once(role, user_text)` | 薄的兼容封装 = `begin_turn` + `finish_turn`，供脚本/测试使用 |
+
+- `app.py` 用 `st.session_state["pending_turn"] = {role, text, est_emotion}` 在两次 rerun 之间传递上下文；弹掉后若 `role` 已切换则丢弃（不串角色）。
+- 「重试这一句」调 `finish_turn`，**不重写**用户那句（它早已落盘）。
+- 切角色 / 清空记忆时必须同时清 `pending_turn`。
+
+### 10.2 人格教练（`persona_forge/interview.py` + `ui/forge.render_coach_panel`）
+
+- 状态：`{turns, answers, index, question, brief, name_hint, knobs, done}`，存 `st.session_state["coach"]`；`STAGES` 固定五问（relation / speech / emotion / boundary / spark）。
+- 提问：`ask_question(state, *, llm=None)` → `call_json(purpose="persona_interview", demo_context={"stage","answers","index"})`，只接受 4–80 字的 `question`，异常回落 `stage["question"]`。
+- 收束：`compose(state, *, llm=None)` → `call_json(purpose="persona_brief")`，只接受 `brief>=20` 字，`knobs` 逐键 clamp(0,1)，任一异常整段回落 `fallback_brief(answers)`。
+- 编译：`compile_persona(brief, knobs=knobs)`，与「⚒ 锻造新角色」完全同一条流水线；结果存 `st.session_state["coach_result"]`，保存走 `state.save_forged_role(...)` 并把 `pending_view` 设为「💬 对话」。
+- `core/demo.py` 必须支持 `persona_interview` / `persona_brief` 两个 purpose（离线答辩演示用），措辞要承接上一句回答里的原词。
