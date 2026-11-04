@@ -230,6 +230,16 @@ hr {{ border: none; border-top: 1px solid var(--surface-2); }}
   background: var(--surface-1) !important; border: none !important;
 }}
 [data-testid="stSelectbox"] div[data-baseweb="select"] svg {{ color: var(--muted) !important; fill: var(--muted) !important; }}
+/* 兜底：万一进程是用旧的深色主题配置起的，BaseWeb 会给下拉框塞深色底，
+   这里把所有子层的底色一起清掉，只留最外层那一块我们自己的 surface-1。 */
+[data-testid="stSelectbox"] div[data-baseweb="select"] div {{
+  background-color: transparent !important; box-shadow: none !important;
+}}
+[data-testid="stSelectbox"] div[data-baseweb="select"] > div:first-child {{
+  background: var(--surface-1) !important; border: 1px solid var(--surface-3) !important;
+  border-radius: var(--radius-control) !important;
+}}
+
 [data-baseweb="menu"] {{ background: var(--surface-1) !important; border: 1px solid var(--surface-3) !important;
   border-radius: var(--radius-control) !important; }}
 [data-baseweb="menu"] li {{ color: var(--ink) !important; }}

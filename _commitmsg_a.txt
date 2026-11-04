@@ -1,0 +1,6 @@
+fix: 下拉框四角透出底色 / 外观开关与上方控件贴太近
+
+- st.selectbox：BaseWeb 的 select 有三层壳，之前只给最内层上了背景与圆角，四角会
+  露出主题底色；现在整层统一 surface-1 底 + 描边，hover 与箭头颜色都跟着 token 走。
+- 侧边栏：外观开关与上方控件之间留 10px，展开区内的 padding 收一下。
+- .gitignore：忽略临时脚本与截图工具（_*.py、_msg*.txt、_shots*/）。
