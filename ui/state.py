@@ -64,7 +64,7 @@ def init_session() -> None:
     ss.setdefault("pending_turn", None)  # 用户已上屏、还没拿到回复的那一句
     ss.setdefault("forge_result", None)
     ss.setdefault("coach", None)  # 人格教练的对话进度
-    ss.setdefault("view", "💬 对话")
+    ss.setdefault("view", "对话")
     ss.setdefault("self_note_seeded", False)
     ss.setdefault("api_key", "")  # 访客自己填的 Key：只活在会话里
     ss.setdefault("api_key_nonce", 0)
@@ -696,6 +696,17 @@ def api_key_hint() -> str:
     if llm.is_demo_mode() and not llm.forced_demo():
         return "离线演示模式（本地假模型，全链路可跑）"
     return llm.mode_label()
+
+
+def mode_badge() -> str:
+    """侧边栏那一行状态用的短标签：只讲"现在走哪条路"，细节留在展开面板里。"""
+    if llm.session_api_key():
+        return f"在线 · 你的 Key {llm.key_fingerprint()}"
+    if llm.env_api_key():
+        return f"在线 · 服务端 Key {llm.key_fingerprint()}"
+    if llm.forced_demo():
+        return "离线演示 · 填 Key 即切在线"
+    return "离线演示模式"
 
 
 def demo_hint() -> str:

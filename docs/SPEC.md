@@ -477,15 +477,15 @@ build_memory_block(bundle, *, include_self=False) -> str
 
 ---
 
-## 9. 界面契约（v4，三视图）
+## 9. 界面契约（v4.4，四视图 + 深色主题）
 
 ### 9.1 视图与归属
 
 | 视图 | 常量 | 内容 |
 |---|---|---|
-| 💬 对话 | `VIEW_CHAT` | 只放对话：气泡流（含 emotion / initiative / loop_hint / memory_update 四行 caption）、失败重试、「让 TA 主动开口」（门闩：`openers and snapshot["loops"]`）、`st.chat_input` |
-| 🧠 记忆舱 | `VIEW_MEMORY` | `st.tabs(["五层总览","L0 原文库","L1 会话层","L2 长期事实","L3 固化快照","L4 自我认知","关系档案"])` |
-| 🧪 实验室 | `VIEW_LAB` | `st.tabs(["本轮 Trace","消融开关","记忆体检"])` |
+| 对话 | `VIEW_CHAT` | 只放对话：气泡流（含 emotion / initiative / loop_hint / memory_update 四行 caption）、失败重试、「让 TA 主动开口」（门闩：`openers and snapshot["loops"]`）、`st.chat_input` |
+| 记忆舱 | `VIEW_MEMORY` | `st.tabs(["五层总览","L0 原文库","L1 会话层","L2 长期事实","L3 固化快照","L4 自我认知","关系档案"])` |
+| 实验室 | `VIEW_LAB` | `st.tabs(["本轮 Trace","消融开关","记忆体检"])` |
 
 - 视图状态存 `st.session_state["view"]`，由 `st.radio`（`horizontal=True`, `label_visibility="collapsed"`）驱动；`ui/state.init_session()` 里 `setdefault("view", VIEW_CHAT)`。
 - 亲密/信任、三层统计、Trace、关系档案**不再**占据对话页右栏；对话页做满宽。
@@ -522,7 +522,7 @@ build_memory_block(bundle, *, include_self=False) -> str
 - 状态：`{turns, answers, index, question, brief, name_hint, knobs, done}`，存 `st.session_state["coach"]`；`STAGES` 固定五问（relation / speech / emotion / boundary / spark）。
 - 提问：`ask_question(state, *, llm=None)` → `call_json(purpose="persona_interview", demo_context={"stage","answers","index"})`，只接受 4–80 字的 `question`，异常回落 `stage["question"]`。
 - 收束：`compose(state, *, llm=None)` → `call_json(purpose="persona_brief")`，只接受 `brief>=20` 字，`knobs` 逐键 clamp(0,1)，任一异常整段回落 `fallback_brief(answers)`。
-- 编译：`compile_persona(brief, knobs=knobs)`，与「⚒ 锻造新角色」完全同一条流水线；结果存 `st.session_state["coach_result"]`，保存走 `state.save_forged_role(...)` 并把 `pending_view` 设为「💬 对话」。
+- 编译：`compile_persona(brief, knobs=knobs)`，与「锻造新角色」完全同一条流水线；结果存 `st.session_state["coach_result"]`，保存走 `state.save_forged_role(...)` 并把 `pending_view` 设为「对话」。
 - `core/demo.py` 必须支持 `persona_interview` / `persona_brief` 两个 purpose（离线答辩演示用），措辞要承接上一句回答里的原词。
 
 ---

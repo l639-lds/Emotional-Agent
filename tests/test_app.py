@@ -20,8 +20,8 @@ TURNS = (
     "我妈最近住院了，我有点撑不住。",
     "我还喜欢下雨天，安静。",
 )
-VIEW_MEMORY = "🧠 记忆舱"
-VIEW_LAB = "🧪 实验室"
+VIEW_MEMORY = "记忆舱"
+VIEW_LAB = "实验室"
 
 
 @pytest.fixture()
@@ -64,8 +64,8 @@ def _markdown(instance: AppTest) -> str:
 
 def test_boot_renders_shell(app):
     assert not app.exception
-    assert app.title, "主标题应该渲染出来"
-    assert any("EmoMem" in title.value for title in app.title)
+    rendered = " ".join([*[_markdown(app)], *[block.value for block in app.sidebar.markdown]])
+    assert "emo-brand" in rendered, "品牌名应该渲染出来"
     assert app.chat_input, "对话页应该有输入框"
     sidebar_text = " ".join(item.value for item in [*app.sidebar.markdown, *app.sidebar.warning, *app.sidebar.caption])
     assert "演示" in sidebar_text or "API" in sidebar_text
@@ -293,13 +293,13 @@ def test_user_avatar_lands_in_my_bubble(app):
 
 
 def test_proactive_toggle_can_turn_it_off(app):
-    """主动关怀可以关掉：关掉后不再出现「让 TA 主动开口」，也不会偷偷调模型。"""
+    """主动关怀可以关掉：关掉后不再出现「让 TA 说这一句」，也不会偷偷调模型。"""
     from ui import state as ui_state
 
     ui_state.set_proactive_enabled(False)
     _say(app, "我叫小林，下周三要去面试，有点慌")
     app.run()
-    assert "让 TA 主动开口" not in _markdown(app)
+    assert "让 TA 说这一句" not in _markdown(app)
     assert not app.exception
 
     ui_state.set_proactive_enabled(True)
@@ -360,13 +360,13 @@ def test_coach_view_has_its_own_header_not_the_current_role(app):
     assert not app.exception
 
     # 只看主区（侧边栏的人设卡里当然还有当前角色，那是另一回事）
-    headers = [block.value for block in app.main.markdown if block.value.strip().startswith("###")]
+    headers = [block.value for block in app.main.markdown if "emo-head-name" in block.value]
     assert any("人格教练" in header for header in headers), headers
     assert not any(role_name in header for header in headers), f"教练页不该顶着「{role_name}」"
     captions = [block.value for block in app.main.caption]
     counts = re.compile(r"L0 原文 \d+ 条")
     assert not any(counts.search(text) for text in captions), "教练页不该显示角色记忆计数"
-    assert any("访谈进度" in text for text in captions)
+    assert any("访谈进度" in text for text in [*headers, *captions])
 
     # 教练页的输入不会写进当前角色的记忆
     before = ui_state.role_thread(role_name)

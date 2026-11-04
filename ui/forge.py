@@ -36,7 +36,7 @@ def _kv(label: str, value: Any) -> None:
 
 
 def render_card_preview(card: PersonaCard) -> None:
-    st.markdown(f"### {_get(card, 'avatar') or '🎭'} {_get(card, 'name') or '未命名角色'}")
+    st.markdown(f"### {_get(card, 'name') or '未命名角色'}")
     tagline = _get(card, "tagline")
     if tagline:
         st.caption(tagline)
@@ -97,7 +97,7 @@ def render_card_preview(card: PersonaCard) -> None:
             _kv(label, " · ".join(items))
 
     if _get(card, "legacy", False):
-        st.info("这是从旧版纯文本人设包装而来的卡片（legacy）。重新锻造可升级为结构化卡。")
+        st.caption("这是从旧版纯文本人设包装而来的卡片（legacy）。重新锻造可升级为结构化卡。")
 
 
 def _critique_block(critique: Critique) -> None:
@@ -124,7 +124,7 @@ def _health_block(health: HealthReport) -> None:
     st.markdown(f"**人设体检** · {_get(health, 'score', 0)} 分")
     for check in checks:
         ok = bool(_get(check, "ok", False))
-        st.caption(f"{'✅' if ok else '⚠️'} {_get(check, 'name')}：{_get(check, 'detail')}")
+        st.caption(f"{'通过' if ok else '未通过'} · {_get(check, 'name')}：{_get(check, 'detail')}")
     summary = _get(health, "summary")
     if summary:
         st.caption(summary)
@@ -202,10 +202,6 @@ def forge_dialog() -> None:
 def render_coach_panel() -> None:
     """人格教练整页（侧边栏第四个视图）：五轮访谈 → 人设速写 → 同一条编译流水线。"""
     # 标题由 app.py 的页头给出（教练页有自己的头，不顶着当前角色），这里只留一句说明
-    st.caption(
-        "想不清「我想要一个什么样的角色」的时候走这条：聊五轮，教练把回答收束成人设速写，再编译。"
-        "答得越具体越好——教练会顺着你上一句继续问。"
-    )
     coach = st.session_state.get("coach")
     if not isinstance(coach, dict) or "index" not in coach:
         coach = interview.new_state()
@@ -213,11 +209,8 @@ def render_coach_panel() -> None:
 
     answered = len([v for v in (coach.get("answers") or {}).values() if str(v).strip()])
     done = bool(coach.get("done"))
-    st.progress(
-        1.0 if done else min(1.0, answered / len(interview.STAGES)),
-        text=f"{interview.progress_text(coach)} · 已答 {answered} 问"
-        + ("（已收束）" if done else ""),
-    )
+    # 进度文字只在页头说一次（app.py 的 page_head 右侧），这里只留那条 2px 的线
+    st.progress(1.0 if done else min(1.0, answered / len(interview.STAGES)))
 
     if not done and not str(coach.get("question") or "").strip():
         with st.spinner("教练在想下一个问题……"):
@@ -237,7 +230,7 @@ def render_coach_panel() -> None:
 
     if not done:
         stage = interview.stage_at(int(coach.get("index") or 0)) or {}
-        st.caption(f"💡 {stage.get('hint', '')}")
+        st.caption(stage.get("hint", "") or "")
         answer = st.text_area(
             "你的回答",
             key=f"coach_answer_{coach.get('index')}_{len(turns)}",
@@ -245,17 +238,15 @@ def render_coach_panel() -> None:
             placeholder=str(stage.get("placeholder", "")),
         )
         col_ok, col_skip, col_reset = st.columns([2, 1, 1])
-        if col_ok.button(
-            "回答这一问", type="primary", use_container_width=True, disabled=not answer.strip()
-        ):
+        if col_ok.button("回答这一问", type="primary", disabled=not answer.strip()):
             interview.take_answer(coach, answer)
             st.session_state["coach"] = coach
             st.rerun()
-        if col_skip.button("跳过", use_container_width=True):
+        if col_skip.button("跳过"):
             interview.skip_stage(coach)
             st.session_state["coach"] = coach
             st.rerun()
-        if col_reset.button("重新开始", use_container_width=True):
+        if col_reset.button("重新开始"):
             st.session_state["coach"] = interview.new_state()
             st.session_state["coach_result"] = None
             st.rerun()
@@ -317,7 +308,7 @@ def render_coach_panel() -> None:
         st.session_state["coach"] = interview.new_state()
         st.session_state["coach_result"] = None
         state.flash(f"已保存角色「{name.strip()}」，可以开始聊天了")
-        st.session_state["pending_view"] = "💬 对话"
+        st.session_state["pending_view"] = "对话"
         st.rerun()
     if cols[1].button("重新聊一次", use_container_width=True):
         st.session_state["coach"] = interview.new_state()

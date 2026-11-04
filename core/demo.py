@@ -350,7 +350,7 @@ def _episode_from_turns(turns: list[dict[str, Any]], fallback_summary: str = "")
     if topics == ["日常"] and user_texts:
         title = user_texts[0][:12]
     summary = fallback_summary or (
-        f"用户提到：{'；'.join(text[:24] for text in user_texts[:3])}"
+        "；".join(text[:24] for text in user_texts[:3])
         if user_texts
         else "用户进行了一段简短寒暄"
     )

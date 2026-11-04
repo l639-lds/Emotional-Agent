@@ -13,37 +13,38 @@ from typing import Any, Iterable
 
 import streamlit as st
 
-from core import config as cfg
-from ui import avatars
+from ui import avatars, theme
 
-_CSS = """
+_CSS = f"""
 <style>
-.emo-thread { display: flex; flex-direction: column; gap: 14px; margin: 6px 0 10px; }
-.emo-row { display: flex; gap: 10px; align-items: flex-start; }
-.emo-row-user { justify-content: flex-end; }
-.emo-avatar { width: 40px; height: 40px; flex: 0 0 40px; border-radius: 50%; background: #F1F5F9;
-  display: flex; align-items: center; justify-content: center; font-size: 22px; line-height: 1;
-  box-shadow: 0 1px 2px rgba(15,23,42,.12); user-select: none; overflow: hidden; }
-.emo-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.emo-body { display: flex; flex-direction: column; gap: 4px; max-width: 72%; min-width: 0; }
-.emo-row-user .emo-body { align-items: flex-end; }
-.emo-name { font-size: 12px; color: #64748B; }
-.emo-bubble { padding: 10px 14px; border-radius: 14px; font-size: 15px; line-height: 1.75;
-  color: #0F172A; white-space: pre-wrap; word-break: break-word;
-  box-shadow: 0 1px 2px rgba(15,23,42,.08); }
-.emo-bubble-assistant { background: #FFFFFF; border: 1px solid #E2E8F0; border-top-left-radius: 4px; }
-.emo-bubble-user { background: #DCFCE7; border: 1px solid #BBF7D0; border-top-right-radius: 4px; }
-.emo-meta { font-size: 11px; color: #64748B; line-height: 1.5; }
-.emo-read { font-size: 11px; color: #94A3B8; }
-.emo-typing { display: inline-flex; align-items: center; gap: 5px; padding: 14px 16px; }
-.emo-typing span { width: 7px; height: 7px; border-radius: 50%; background: #94A3B8;
-  display: inline-block; animation: emo-blink 1.2s infinite ease-in-out; }
-.emo-typing span:nth-child(2) { animation-delay: .18s; }
-.emo-typing span:nth-child(3) { animation-delay: .36s; }
-@keyframes emo-blink {
-  0%, 60%, 100% { opacity: .28; transform: translateY(0); }
-  30% { opacity: 1; transform: translateY(-3px); }
-}
+.emo-thread {{ display: flex; flex-direction: column; gap: 26px; margin: 4px 0 26px; }}
+.emo-row {{ display: flex; gap: 14px; align-items: flex-start; }}
+.emo-row-user {{ flex-direction: row; justify-content: flex-end; }}
+.emo-avatar {{ width: 30px; height: 30px; flex: 0 0 30px; border-radius: 50%; overflow: hidden;
+  display: flex; align-items: center; justify-content: center; font-size: 17px; line-height: 1;
+  background: {theme.SURFACE_2}; color: {theme.INK}; user-select: none; margin-top: 2px; }}
+.emo-avatar img {{ width: 100%; height: 100%; object-fit: cover; display: block; }}
+.emo-body {{ display: flex; flex-direction: column; gap: 6px; max-width: 66ch; min-width: 0; }}
+.emo-row-user .emo-body {{ align-items: flex-end; }}
+.emo-name {{ font-size: 13px; color: {theme.FAINT}; letter-spacing: 0.01em; }}
+.emo-bubble {{ font-size: 15px; line-height: 1.78; padding: 13px 16px; border-radius: 2px;
+  white-space: pre-wrap; word-break: break-word; }}
+.emo-bubble-assistant {{ background: {theme.SURFACE_1}; color: {theme.INK}; }}
+.emo-bubble-user {{ background: {theme.SURFACE_2}; color: {theme.INK}; }}
+.emo-meta {{ font-size: 13px; color: {theme.FAINT}; line-height: 1.65; }}
+.emo-read {{ font-size: 13px; color: {theme.FAINT}; }}
+.emo-typing {{ display: inline-flex; align-items: center; gap: 6px; padding: 16px; }}
+.emo-typing span {{ width: 5px; height: 5px; border-radius: 50%; background: {theme.MUTED};
+  display: inline-block; animation: emo-blink 1.2s infinite ease-in-out; }}
+.emo-typing span:nth-child(2) {{ animation-delay: .18s; }}
+.emo-typing span:nth-child(3) {{ animation-delay: .36s; }}
+@keyframes emo-blink {{
+  0%, 60%, 100% {{ opacity: .25; transform: translateY(0); }}
+  30% {{ opacity: 1; transform: translateY(-2px); }}
+}}
+@media (prefers-reduced-motion: reduce) {{
+  .emo-typing span {{ animation: none; opacity: .6; }}
+}}
 </style>
 """
 
@@ -65,17 +66,17 @@ def _stamp(value: Any) -> str:
 
 
 def meta_line(message: dict[str, Any]) -> str:
-    """助手气泡下方的小字：情绪 / 追问 / 待办 / 记忆更新。"""
+    """助手气泡下方的小字：情绪 / 补一句 / 待办 / 记忆更新。"""
     parts: list[str] = []
     emotion = message.get("emotion")
     if emotion:
-        parts.append(f"{cfg.EMOTION_EMOJI.get(emotion, '')} 你当时的情绪：{emotion}")
+        parts.append(f"你当时听上去：{emotion}")
     if message.get("initiative"):
-        parts.append(f"↪ TA 补一句：{message['initiative']}")
+        parts.append(f"补一句：{message['initiative']}")
     if message.get("loop_hint"):
-        parts.append(f"📌 记下待办：{message['loop_hint']}")
+        parts.append(f"记下待办：{message['loop_hint']}")
     if message.get("memory_update"):
-        parts.append(f"🧠 本轮记忆更新：{message['memory_update']}")
+        parts.append(f"记忆更新：{message['memory_update']}")
     return " · ".join(parts)
 
 
@@ -126,7 +127,8 @@ def render_typing(*, role_name: str, role_avatar: str) -> None:
     """把打字态画在当前对话下面（写盘/等模型之前调用，用户立刻能看到反馈）。"""
     st.markdown(_CSS, unsafe_allow_html=True)
     st.markdown(
-        f'<div class="emo-thread">{typing_html(role_name=role_name, role_avatar=role_avatar)}</div>',
+        f'<div class="emo-col"><div class="emo-thread">'
+        f'{typing_html(role_name=role_name, role_avatar=role_avatar)}</div></div>',
         unsafe_allow_html=True,
     )
 
@@ -160,4 +162,7 @@ def render_thread(
     if not rows:
         st.caption("还没有开始聊。说一句试试？")
         return
-    st.markdown(f'<div class="emo-thread">{"".join(rows)}</div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="emo-col"><div class="emo-thread">{"".join(rows)}</div></div>',
+        unsafe_allow_html=True,
+    )

@@ -143,12 +143,22 @@ class Candidate:
         return "long" if self.kind == "fact" else "mid"
 
     def to_trace(self) -> TraceItem:
-        """转为 UI 可直接渲染的 TraceItem。"""
+        """转为 UI 可直接渲染的 TraceItem。
+
+        ``text`` 这里给人看的人话版：情景记忆的 ``search_text`` 会把标题/摘要/话题/
+        关键词拼起来（用于算相似度），直接显示会出现「面试、住院 面试、住院」这种重复。
+        """
+        if isinstance(self.item, Episode):
+            summary = str(self.item.summary or "").strip()
+            title = str(self.item.title or "").strip()
+            display = f"{title}｜{summary}" if title and summary else (title or summary)
+        else:
+            display = str(getattr(self.item, "content", "") or self.text)
         return TraceItem(
             tier=self.tier,
             kind=self.kind,
             id=self.item_id,
-            text=self.text,
+            text=display,
             score=round(self.score, 4),
             components={
                 "sim": round(self.sim, 4),

@@ -1,8 +1,9 @@
 """EmoMem · 情感陪伴 Agent（Streamlit 入口）。
 
-本文件只负责界面编排：侧边栏（角色 / 人设 / 运行模式）＋ 三个视图
-（💬 对话 / 🧠 记忆舱 / 🧪 实验室）。业务逻辑分别在 `memory_os`（五层记忆）、
-`persona_forge`（人设编译器）、`core`（配置 / LLM / 离线演示）与 `ui`（状态与面板渲染）中。
+本文件只负责界面编排：侧边栏（导航 / 角色 / 人设 / 运行模式）＋ 四个视图
+（对话 / 记忆舱 / 实验室 / 人格教练）。视觉全部走 `ui/theme.py` 里的 token，
+本文件不写 CSS。业务逻辑分别在 `memory_os`（五层记忆）、`persona_forge`
+（人设编译器）、`core`（配置 / LLM / 离线演示）与 `ui`（状态与面板渲染）中。
 """
 
 from __future__ import annotations
@@ -14,13 +15,13 @@ import streamlit as st
 from core import config as cfg
 from core import llm
 from memory_os import DEFAULT_OPENER as FALLBACK_OPENER
-from ui import avatars, chat, forge, panels, state
+from ui import avatars, chat, forge, panels, state, theme
 
 USER_AVATAR = "🙂"  # 默认头像；真实值来自侧边栏「我的样子」
-VIEW_CHAT = "💬 对话"
-VIEW_MEMORY = "🧠 记忆舱"
-VIEW_LAB = "🧪 实验室"
-VIEW_COACH = "🧭 人格教练"
+VIEW_CHAT = "对话"
+VIEW_MEMORY = "记忆舱"
+VIEW_LAB = "实验室"
+VIEW_COACH = "人格教练"
 
 
 def _reset_turn_state() -> None:
@@ -64,6 +65,7 @@ st.set_page_config(
 
 state.init_session()
 state.apply_session_key()  # 把本会话自己的 Key 放回上下文（不落盘、不进环境变量）
+theme.inject()
 
 role_file = state.load_role_file()
 names = state.role_names(role_file)
@@ -98,8 +100,7 @@ if pending_view:  # 别的组件想跳视图时用它：直接改 key="view" 会
 
 
 with st.sidebar:
-    st.title("🧠 EmoMem")
-    st.caption("五层记忆 · 人设编译器")
+    theme.brand("五层记忆 · 人设编译器")
 
     view = st.radio(
         "视图",
@@ -109,29 +110,38 @@ with st.sidebar:
         key="view",
     )
 
-    st.divider()
-    if llm.is_demo_mode():
-        st.warning(state.api_key_hint(), icon="🎬")
-        _demo_hint = state.demo_hint()
-        if _demo_hint:
-            st.caption(_demo_hint)
-    else:
-        st.success(state.api_key_hint(), icon="🔌")
+    st.write("")
+    if view == VIEW_COACH:
+        # 教练页是独立工作台：别让"当前角色"看起来像这次访谈的对象
+        st.caption(f"正在建一个新角色，不会动「{role_name}」的记忆。建完回到「对话」就多一个角色可选。")
+    picked = st.selectbox("当前角色", names, index=names.index(role_name), disabled=(view == VIEW_COACH))
+    if picked != role_name:
+        st.session_state["role"] = picked
+        st.session_state["last_turn"] = None
+        st.session_state["pending_turn"] = None
+        st.session_state["self_note_seeded"] = False
+        st.rerun()
+
+    if st.button("锻造新角色", use_container_width=True, type="primary"):
+        forge.forge_dialog()
+    if st.button("和人格教练聊着建角色", use_container_width=True):
+        st.session_state["pending_view"] = VIEW_COACH
+        st.rerun()
+
+    st.write("")
+    st.caption(state.mode_badge())
     _key_problem = state.api_key_problem()
     if _key_problem:
-        st.error(_key_problem, icon="🔑")
+        st.caption(_key_problem)
 
     with st.expander("运行模式 / API Key", expanded=False):
         st.caption(
-            "Key 只存在你自己的浏览器会话里：页面只显示末 4 位指纹，别处看不到明文，"
-            "退出浏览器即失效，也不会写进 data/ 或日志。"
+            "Key 只存在你自己的浏览器会话里：页面只显示末 4 位指纹，退出浏览器即失效，"
+            "不写进 data/，也不进服务端环境变量。"
         )
         st.caption(state.session_key_label())
         if llm.is_demo_mode():
-            st.caption(
-                "没有 Key 也能跑：离线演示模式会用本地假模型把五层记忆、固化、人设编译全链路跑通。"
-                "想用服务端公共 Key（部署方配置），在终端设 `$env:DEEPSEEK_API_KEY=\"sk-...\"` 后重启（cmd 才用 `set`）。"
-            )
+            st.caption(state.demo_hint())
         key_input = st.text_input(
             "DeepSeek API Key（只用于本会话）",
             type="password",
@@ -149,27 +159,6 @@ with st.sidebar:
                 state.clear_api_key()
                 state.bump_key_input()
                 st.rerun()
-
-    st.divider()
-    if view == VIEW_COACH:
-        # 教练页是独立工作台：别让"当前角色"看起来像这次访谈的对象
-        st.caption(
-            f"🧭 正在建一个新角色——不会动「{role_name}」的记忆。"
-            "建完回到「💬 对话」就会多一个角色可选。"
-        )
-    picked = st.selectbox("当前角色", names, index=names.index(role_name), disabled=(view == VIEW_COACH))
-    if picked != role_name:
-        st.session_state["role"] = picked
-        st.session_state["last_turn"] = None
-        st.session_state["pending_turn"] = None
-        st.session_state["self_note_seeded"] = False
-        st.rerun()
-
-    if st.button("⚒ 锻造新角色", use_container_width=True, type="primary"):
-        forge.forge_dialog()
-    if st.button("🧭 和人格教练聊着建角色", use_container_width=True):
-        st.session_state["pending_view"] = VIEW_COACH
-        st.rerun()
 
     with st.expander("我的样子（头像）", expanded=False):
         st.caption("头像只影响你自己在对话里的样子，不会写进角色卡。")
@@ -265,30 +254,52 @@ with st.sidebar:
 
 
 # ---------------------------------------------------------------------------
-# 顶部：角色标题 + 视图切换
+# 页头：一个视图一个头部（角色名或视图名 + 一行状态 + 右侧规模）
 # ---------------------------------------------------------------------------
-head_left, head_right = st.columns([3, 2])
-with head_left:
-    if view == VIEW_COACH:
-        st.markdown("### 🧭 人格教练")
-        st.caption("五问一步，聊着把角色问出来 · 这是独立的工作台，不读写任何现有角色的记忆")
-    else:
-        st.markdown(f"### {avatars.inline(avatar)} {role_name}", unsafe_allow_html=True)
-        st.caption(f"关系阶段 **{stage}** · 亲密度 {intimacy:.0f}/100 · 调用模型 {cfg.DEEPSEEK_MODEL}")
-with head_right:
-    if view == VIEW_COACH:
-        _coach = st.session_state.get("coach") or {}
-        _answered = len(_coach.get("answers") or {})
-        st.caption(f"访谈进度：第 {min(int(_coach.get('index', 0)) + 1, 5)} / 5 问 · 已答 {_answered} 问")
-    else:
-        stat_row = snapshot.get("stats") or {}
-        st.caption(
-            f"L0 原文 {int((snapshot.get('archive') or {}).get('messages', 0) or 0)} 条 · "
-            f"L1 会话 {int(stat_row.get('turns', 0) or 0)} 条 · "
-            f"L2 事实 {int(stat_row.get('facts', 0) or 0)} 条 · "
-            f"L3 快照 {int((snapshot.get('snapshots') or {}).get('count', 0) or 0)} 份 · "
-            f"L4 自述 {int((snapshot.get('self') or {}).get('count', 0) or 0)} 条"
-        )
+import html as _html  # noqa: E402  （只用来把动态文本放进页头的极少量 HTML 里）
+
+_stat_row = snapshot.get("stats") or {}
+_counts = (
+    f"L0 原文 {int((snapshot.get('archive') or {}).get('messages', 0) or 0)} · "
+    f"L1 会话 {int(_stat_row.get('turns', 0) or 0)} · "
+    f"L2 事实 {int(_stat_row.get('facts', 0) or 0)} · "
+    f"L3 快照 {int((snapshot.get('snapshots') or {}).get('count', 0) or 0)} · "
+    f"L4 自述 {int((snapshot.get('self') or {}).get('count', 0) or 0)}"
+)
+_coach_state = st.session_state.get("coach") or {}
+_coach_done = len(_coach_state.get("answers") or {})
+
+if view == VIEW_COACH:
+    theme.page_head(
+        name="人格教练",
+        who="五问一步",
+        meta="聊着把一个人问出来，收束成人设速写，再走同一条编译流水线",
+        right=f"访谈进度 · 第 {min(int(_coach_state.get('index', 0)) + 1, 5)} / 5 问 · 已答 {_coach_done} 问",
+    )
+elif view == VIEW_MEMORY:
+    theme.page_head(
+        name="记忆舱",
+        who="五层",
+        meta="每层记什么、现在有多少、什么时候被注入——记忆不是黑箱",
+        right=_counts,
+    )
+elif view == VIEW_LAB:
+    theme.page_head(
+        name="实验室",
+        who="Trace 与消融",
+        meta="把「它为什么记得这句话」和「关掉某一层会怎样」摊开",
+        right=_counts,
+    )
+else:
+    theme.page_head(
+        name=_html.escape(role_name),
+        who="TA",
+        meta=(
+            f"关系阶段 <b>{_html.escape(str(stage))}</b> · 亲密度 {intimacy:.0f}/100 · "
+            f"模型 {_html.escape(cfg.DEEPSEEK_MODEL)}"
+        ),
+        right=_counts,
+    )
 
 flash_notes = state.take_flash()  # 本轮的固化提示，直接贴在对话下方，不用浮层挡住聊天
 
@@ -304,9 +315,26 @@ if view == VIEW_CHAT:
         role_avatar=avatar,
         user_avatar=state.user_avatar(),
     )
+    # 空会话别留半屏空白：给三句可以照着说的话（点了就直接发出去）
+    _user_turns = [t for t in thread if t.get("role") == "user"]
+    if not _user_turns and not st.session_state.get("pending_turn"):
+        st.caption("不知道说什么的话，可以从这三句里挑一句：")
+        _starter_cols = st.columns(3)
+        for _col, _line in zip(
+            _starter_cols,
+            ["今天有点累，但也没什么大事。", "我妈最近住院了，我有点撑不住。", "下周三要去面试，心里没底。"],
+        ):
+            if _col.button(_line, key=f"starter_{_line[:6]}"):
+                _priors = state.begin_turn(role_name, _line)
+                st.session_state["pending_turn"] = {
+                    "role": role_name,
+                    "text": _line,
+                    "est_emotion": _priors,
+                }
+                st.rerun()
     if flash_notes:
         _notes = " · ".join(note if len(note) <= 26 else note[:26] + "…" for note in flash_notes[:2])
-        st.caption(f"🧠 {_notes}")
+        st.caption(_notes)
 
     retry = st.session_state.get("retry")
     if retry:
@@ -340,14 +368,16 @@ if view == VIEW_CHAT:
         card = cached
     # 主动开口必须落在"具体某件事"上：只剩兜底寒暄就干脆不显示（可在侧边栏关掉）
     if card:
-        with st.container(border=True):
-            st.caption(f"TA 想先开口（{card.get('label', '问一句')}）：")
-            st.markdown(f"「{card['opener']}」")
-            if card.get("reason"):
-                st.caption(f"依据：{card['reason']}")
-            if st.button("让 TA 主动开口", use_container_width=True):
-                st.session_state["pending_opener"] = {"role": role_name}
-                st.rerun()
+        _why = f"<span class='emo-propose-why'>{_html.escape(card.get('reason') or '')}</span>" if card.get("reason") else ""
+        st.markdown(
+            "<div class='emo-propose'>"
+            f"<span class='emo-propose-label'>TA 想先开口 · {_html.escape(card.get('label', '问一句'))}</span>"
+            f"<p>{_html.escape(card['opener'])}</p>{_why}</div>",
+            unsafe_allow_html=True,
+        )
+        if st.button("让 TA 说这一句"):
+            st.session_state["pending_opener"] = {"role": role_name}
+            st.rerun()
 
     # 点了"让 TA 主动开口"：这一句才值得让模型润色一次，然后先画打字态、再落话
     pending_opener = st.session_state.pop("pending_opener", None)
@@ -414,7 +444,7 @@ if view == VIEW_CHAT:
                 hint += f"（覆盖 {' / '.join(tiers)} 层）"
             if last_turn.get("self_note_used"):
                 hint += " · 本轮首次唤起 TA 的自我认知"
-            st.caption(f"{hint}　想看「为什么记得这句话」→ 切到 🧠 记忆舱 · 🧪 实验室")
+            st.caption(f"{hint}　想看「为什么记得这句话」→ 左侧切到「记忆舱」或「实验室」")
         else:
             st.caption("这一轮没有命中旧记忆（还没有可复用的部分）——聊到第 4 轮会做一次「睡眠整理」，之后这里会显示注入了什么。")
 
@@ -423,15 +453,11 @@ if view == VIEW_CHAT:
 # 视图二：记忆舱（五层）
 # ---------------------------------------------------------------------------
 if view == VIEW_MEMORY:
-    st.markdown("#### 🧠 记忆舱")
-    st.caption("五层记忆各自记什么、现在有多少、什么时候被注入——记忆不是黑箱。")
-
     layers = st.tabs(
         ["五层总览", "L0 原文库", "L1 会话层", "L2 长期事实", "L3 固化快照", "L4 自我认知", "关系档案"]
     )
     with layers[0]:
         panels.render_layer_overview(snapshot)
-        st.divider()
         panels.render_decay_curve(snapshot)
     with layers[1]:
         panels.render_archive(engine, role_name, snapshot)
@@ -446,7 +472,6 @@ if view == VIEW_MEMORY:
         panels.render_self_notes(snapshot)
     with layers[6]:
         panels.render_relationship(snapshot)
-        st.divider()
         panels.render_loops(snapshot, engine, role_name)
 
 
@@ -454,8 +479,6 @@ if view == VIEW_MEMORY:
 # 视图三：实验室（Trace / 消融）
 # ---------------------------------------------------------------------------
 if view == VIEW_LAB:
-    st.markdown("#### 🧪 实验室")
-    st.caption("把「它为什么记得这句话」「关掉某一层会怎样」摊开给评委看。")
     lab = st.tabs(["本轮 Trace", "消融开关", "记忆体检"])
     with lab[0]:
         panels.render_trace(st.session_state.get("last_turn"))
@@ -463,7 +486,6 @@ if view == VIEW_LAB:
         panels.render_ablation(engine, role_name)
     with lab[2]:
         panels.render_stats(snapshot)
-        st.divider()
         panels.render_self_notes(snapshot)
         st.caption("自我认知本轮是否已注入：" + ("是" if st.session_state.get("self_note_seeded") else "否"))
 
@@ -471,11 +493,6 @@ if view == VIEW_LAB:
 # 视图四：人格教练（聊着把人设问出来）
 # ---------------------------------------------------------------------------
 if view == VIEW_COACH:
-    forge.render_coach_panel()
+    with st.container(key="coach"):  # 只为了让这一页和对话页同宽（.st-key-coach 在 theme 里限宽）
+        forge.render_coach_panel()
 
-st.divider()
-st.caption(
-    "EmoMem · 五层记忆（L0 原文库 / L1 会话层 / L2 长期事实 / L3 固化快照 / L4 自我认知）+ "
-    "情绪加权检索 + 记忆冲突消解 + 可解释 Trace + 关系档案驱动的人格漂移 + "
-    "未闭环事件主动关怀 + 记忆可纠正 + 人设编译器"
-)

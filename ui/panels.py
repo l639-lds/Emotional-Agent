@@ -5,17 +5,23 @@
 
 from __future__ import annotations
 
+import html as _html
 import time
 from typing import Any, Optional
 
-import pandas as pd
 import streamlit as st
 
 from core import config as cfg
 from memory_os import MemoryEngine
-from ui import state
+from ui import state, theme
 
-_TIER_COLOR = {"short": "#38BDF8", "mid": "#A78BFA", "long": "#F59E0B"}
+
+def _esc(text: Any) -> str:
+    """转义成可直接放进 HTML 的文本（记忆里的人话可能是任意字符）。"""
+    return _html.escape(str(text or ""))
+
+# 一个 accent 只有一种强调：层/类型标签统一走中性 surface，强调只给"活跃"的数值
+_TIER_COLOR = {"short": theme.MUTED, "mid": theme.MUTED, "long": theme.MUTED}
 _TIER_ALIAS = {"short": "短期", "mid": "中期", "long": "长期"}
 
 
@@ -27,10 +33,11 @@ def fmt_ts(value: Any) -> str:
         return str(value or "")
 
 
-def _chip(text: str, color: str = "#334155") -> str:
+def _chip(text: str, color: str = "") -> str:
+    """标签：方角、无边框、只用 surface 的明度差分层（不用描边做分隔）。"""
     return (
-        f"<span style='background:{color}1a;color:{color};border:1px solid {color}55;"
-        f"border-radius:999px;padding:1px 8px;font-size:0.75rem;margin-right:4px;"
+        f"<span style='background:{theme.SURFACE_2};color:{theme.MUTED};"
+        f"border-radius:2px;padding:2px 7px;font-size:13px;margin-right:6px;"
         f"white-space:nowrap'>{text}</span>"
     )
 
@@ -68,7 +75,7 @@ def render_short(snap: dict[str, Any]) -> None:
     st.markdown(f"**{cfg.TIER_LABELS['short']}** · {short.get('count', 0)} 条")
     summary = (short.get("summary") or "").strip()
     if summary:
-        st.info(f"滚动摘要：{summary}")
+        st.caption(f"滚动摘要：{summary}")
     turns = short.get("turns") or []
     if not turns:
         st.caption("还没有对话。")
@@ -76,12 +83,11 @@ def render_short(snap: dict[str, Any]) -> None:
         who = "你" if turn.get("role") == "user" else "TA"
         stamp = turn.get("ts_label") or ""
         emotion = turn.get("emotion")
-        tag = _chip(f"{emotion}", cfg.EMOTION_COLOR.get(emotion, "#64748B")) if emotion else ""
+        tag = _chip(f"{emotion}") if emotion else ""
         st.markdown(
             f"{tag}**{who}** · {stamp}\n\n{turn.get('content', '')}",
             unsafe_allow_html=True,
         )
-    st.divider()
 
 
 def render_mid(snap: dict[str, Any], role_name: Optional[str] = None) -> None:
@@ -93,22 +99,21 @@ def render_mid(snap: dict[str, Any], role_name: Optional[str] = None) -> None:
     for item in items:
         archived = bool(item.get("archived"))
         title = item.get("title") or "（未命名片段）"
-        prefix = "🗄 " if archived else ""
+        prefix = "已淡化 · " if archived else ""
         with st.expander(f"{prefix}{title}　·　强度 {float(item.get('strength', 0)):.0%}"):
             st.write(item.get("summary") or "")
             topics = item.get("topics") or []
             if topics:
-                st.markdown("".join(_chip(t, _TIER_COLOR["mid"]) for t in topics), unsafe_allow_html=True)
+                st.markdown("".join(_chip(t) for t in topics), unsafe_allow_html=True)
             st.caption(
                 f"效价 {float(item.get('valence', 0)):+.2f} · 唤醒 {float(item.get('arousal', 0)):.2f} · "
                 f"重要性 {float(item.get('importance', 0)):.2f} · 召回 {item.get('recall_count', 0)} 次 · "
                 f"{item.get('created_label', '')}"
             )
             _strength_bar(item.get("strength", 0.0))
-            if role_name and st.button("🗑 让 TA 忘掉这段", key=f"forget_mid_{item.get('id')}"):
+            if role_name and st.button("让 TA 忘掉这段", key=f"forget_mid_{item.get('id')}"):
                 state.forget_memory(role_name, str(item.get("id")), tier="mid")
                 st.rerun()
-    st.divider()
 
 
 def render_long(snap: dict[str, Any], role_name: Optional[str] = None) -> None:
@@ -127,12 +132,12 @@ def render_long(snap: dict[str, Any], role_name: Optional[str] = None) -> None:
     def _row(fact: dict[str, Any], tier: str = "long") -> None:
         archived = bool(fact.get("archived"))
         superseded = fact.get("superseded_by")
-        color = "#94A3B8" if (archived or superseded) else "#0F172A"
+        color = theme.FAINT if (archived or superseded) else theme.INK
         category = fact.get("category") or "近况"
-        tone = "🗄 " if archived else ("♻️ " if superseded else "")
+        tone = "已淡化 · " if archived else ("已被取代 · " if superseded else "")
         st.markdown(
-            f"{_chip(category, _TIER_COLOR['long'])}"
-            f"<span style='color:{color}'>{tone}{fact.get('content', '')}</span>",
+            f"{_chip(category)}"
+            f"<span style='color:{color}'>{tone}{_esc(_second_person(fact.get('content', '')))}</span>",
             unsafe_allow_html=True,
         )
         extra = (
@@ -143,9 +148,9 @@ def render_long(snap: dict[str, Any], role_name: Optional[str] = None) -> None:
             extra += f" · 已被新事实取代（审计保留：{superseded}）"
         cols = st.columns([4, 1, 1])
         cols[0].caption(extra)
-        if role_name and cols[1].button("✏️ 改正", key=f"correct_{tier}_{fact.get('id')}"):
+        if role_name and cols[1].button("改正", key=f"correct_{tier}_{fact.get('id')}"):
             correct_dialog(role_name, fact)
-        if role_name and cols[2].button("🗑 忘掉", key=f"forget_{tier}_{fact.get('id')}"):
+        if role_name and cols[2].button("忘掉", key=f"forget_{tier}_{fact.get('id')}"):
             state.forget_memory(role_name, str(fact.get("id")), tier=tier)
             st.rerun()
 
@@ -155,7 +160,6 @@ def render_long(snap: dict[str, Any], role_name: Optional[str] = None) -> None:
         st.markdown("**跨角色共享的客观事实**")
         for fact in shared:
             _row(fact, "shared")
-    st.divider()
 
 
 def render_loops(snap: dict[str, Any], engine: MemoryEngine, role_name: str) -> None:
@@ -169,8 +173,8 @@ def render_loops(snap: dict[str, Any], engine: MemoryEngine, role_name: str) -> 
         cols = st.columns([5, 1])
         due = f"（{loop.get('due_hint')}）" if loop.get("due_hint") else ""
         cols[0].markdown(
-            f"{_chip(loop.get('kind', '待办'), '#0EA5E9')}"
-            f"<span style='color:#0F172A'>{loop.get('what', '')}{due}</span>",
+            f"{_chip(loop.get('kind', '待办'))}"
+            f"<span style='color:{theme.INK}'>{loop.get('what', '')}{due}</span>",
             unsafe_allow_html=True,
         )
         if cols[1].button("已完成", key=f"close_{loop.get('id')}"):
@@ -183,7 +187,7 @@ def render_relationship(snap: dict[str, Any]) -> None:
     rel = snap.get("relationship") or {}
     intimacy = float(rel.get("intimacy", 0) or 0)
     stage = rel.get("stage") or cfg.stage_of(intimacy)
-    st.markdown(f"**关系阶段** {_chip(stage, '#6366F1')}", unsafe_allow_html=True)
+    st.markdown(f"**关系阶段** {_chip(stage)}", unsafe_allow_html=True)
     st.progress(min(1.0, intimacy / 100.0), text=f"亲密度 {intimacy:.1f} / 100")
     st.progress(min(1.0, float(rel.get("trust", 0) or 0) / 100.0), text=f"信任 {float(rel.get('trust', 0) or 0):.1f} / 100")
     nickname = rel.get("nickname") or "（还没给你起称呼）"
@@ -195,9 +199,9 @@ def render_relationship(snap: dict[str, Any]) -> None:
     jokes = rel.get("inside_jokes") or []
     themes = rel.get("shared_themes") or []
     if jokes:
-        st.markdown("".join(_chip(f"梗：{j}", "#EC4899") for j in jokes), unsafe_allow_html=True)
+        st.markdown("".join(_chip(f"梗：{j}") for j in jokes), unsafe_allow_html=True)
     if themes:
-        st.markdown("".join(_chip(f"常聊：{t}", "#0EA5E9") for t in themes), unsafe_allow_html=True)
+        st.markdown("".join(_chip(f"常聊：{t}") for t in themes), unsafe_allow_html=True)
     st.caption(
         "这两条不是给用户看的分数，是内部状态：亲密度决定关系阶段（20/45/75 三档），"
         "阶段再去调语气——称呼、能不能开玩笑、多久回一次；信任只做一件事："
@@ -207,7 +211,7 @@ def render_relationship(snap: dict[str, Any]) -> None:
 
 
 def render_decay_curve(snap: dict[str, Any]) -> None:
-    """遗忘曲线：未来 14 天的强度预测。"""
+    """遗忘曲线：未来 14 天的强度预测（自己画 SVG，不用默认图表配色）。"""
     curve = snap.get("decay_curve") or []
     peak = max(
         [float(point.get("episode") or 0) for point in curve]
@@ -217,12 +221,57 @@ def render_decay_curve(snap: dict[str, Any]) -> None:
     if not curve or peak <= 0:
         st.caption("还没有可预测的记忆——聊满 4 轮固化一次之后，这里会画出未来 14 天的强度衰减。")
         return
-    frame = pd.DataFrame(curve)
-    frame = frame.rename(columns={"label": "日期", "episode": "中期情景", "fact": "长期事实"})
-    # 按原始顺序锁定 x 轴（否则 "+10天" 会被排到 "+2天" 前面）
-    frame["日期"] = pd.Categorical(frame["日期"], categories=list(frame["日期"]), ordered=True)
-    st.line_chart(frame.set_index("日期"), height=180)
-    st.caption("不主动召回时，记忆强度按指数衰减；每次被召回都会强化（间隔重复）。")
+
+    width, height = 720.0, 190.0
+    pad_l, pad_r, pad_t, pad_b = 2.0, 2.0, 10.0, 26.0
+    plot_w = width - pad_l - pad_r
+    plot_h = height - pad_t - pad_b
+    n = len(curve)
+
+    def _points(key: str) -> str:
+        coords = []
+        for index, point in enumerate(curve):
+            x = pad_l + (plot_w * index / max(1, n - 1))
+            value = max(0.0, min(1.0, float(point.get(key) or 0.0)))
+            y = pad_t + plot_h * (1.0 - value)
+            coords.append(f"{x:.1f},{y:.1f}")
+        return " ".join(coords)
+
+    def _labels() -> str:
+        picked = [0, n // 2, n - 1]
+        out = []
+        for index in picked:
+            x = pad_l + (plot_w * index / max(1, n - 1))
+            anchor = "start" if index == 0 else ("end" if index == n - 1 else "middle")
+            label = str(curve[index].get("label") or "")
+            out.append(
+                f"<text x='{x:.1f}' y='{height - 6:.1f}' fill='{theme.FAINT}' font-size='12'"
+                f" text-anchor='{anchor}'>{label}</text>"
+            )
+        return "".join(out)
+
+    svg = (
+        f"<svg viewBox='0 0 {width:.0f} {height:.0f}' width='100%' height='{height:.0f}' "
+        f"role='img' aria-label='未来 14 天记忆强度衰减预测' style='display:block'>"
+        # 基线：只用一条，不用网格
+        f"<line x1='{pad_l}' y1='{pad_t + plot_h:.1f}' x2='{width - pad_r}' y2='{pad_t + plot_h:.1f}' "
+        f"stroke='{theme.SURFACE_3}' stroke-width='1'/>"
+        # 中期情景：更细、更淡（次要序列不用第二个强调色）
+        f"<polyline fill='none' stroke='{theme.FAINT}' stroke-width='1.2' "
+        f"points='{_points('episode')}'/>"
+        # 长期事实：唯一强调色
+        f"<polyline fill='none' stroke='{theme.ACCENT}' stroke-width='2' "
+        f"stroke-linejoin='round' points='{_points('fact')}'/>"
+        f"{_labels()}"
+        "</svg>"
+    )
+    st.markdown(svg, unsafe_allow_html=True)
+    first_fact = float(curve[0].get("fact") or 0.0)
+    last_fact = float(curve[-1].get("fact") or 0.0)
+    st.caption(
+        f"长期事实强度：今天 {first_fact:.0%} → 14 天后 {last_fact:.0%}；"
+        "不主动召回时按指数衰减，每次被召回都会被强化（间隔重复）。"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -248,16 +297,24 @@ def render_layer_overview(snap: dict[str, Any]) -> None:
         "snapshots": int((snap.get("snapshots") or {}).get("count", 0) or 0),
         "self": int((snap.get("self") or {}).get("count", 0) or 0),
     }
-    rows = [
-        {
-            "层": layer,
-            "名字": name,
-            "现在有多少": counts.get(key, 0),
-            "生命周期与注入策略": policy,
-        }
+    rows_html = "".join(
+        "<div class='emo-layer'>"
+        f"<span class='emo-layer-code'>{layer}</span>"
+        f"<span class='emo-layer-name'>{name}</span>"
+        f"<span class='emo-layer-count'>{counts.get(key, 0)}</span>"
+        f"<span class='emo-layer-policy'>{policy}</span>"
+        "</div>"
         for layer, name, key, policy in _LAYER_ROWS
-    ]
-    st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+    )
+    st.markdown(
+        "<div class='emo-layers'>"
+        "<div class='emo-layer emo-layer-head'>"
+        "<span class='emo-layer-code'>层</span><span class='emo-layer-name'>名字</span>"
+        "<span class='emo-layer-count'>现在有多少</span><span class='emo-layer-policy'>生命周期与注入策略</span>"
+        "</div>"
+        f"{rows_html}</div>",
+        unsafe_allow_html=True,
+    )
     st.caption("前三层记的都是「你」，第四层记的是「它」——前者是资料，后者才是性格的连续性。")
     st.caption(
         f"中期情景 {stats.get('episodes', 0)} 条 · 未闭环 {stats.get('open_loops', 0)} 条 · "
@@ -282,19 +339,18 @@ def render_archive(engine: MemoryEngine, role_name: str, snap: dict[str, Any]) -
     if query:
         hits = state.search_archive(role_name, query, limit=cfg.ARCHIVE_TOP_K)
         if not hits:
-            st.info("没找到相关原文——原文库只存「说过的话」，不猜。")
+            st.caption("没找到相关原文——原文库只存「说过的话」，不猜。")
         else:
             st.caption(f"命中 {len(hits)} 条（按分句最大相似度排序）")
             for hit in hits:
                 who = "你" if hit.get("sender") == "user" else "TA"
                 st.markdown(
-                    f"{_chip(who, '#0EA5E9' if who == '你' else '#6366F1')}"
-                    f"<span style='color:#475569'>{hit.get('ts_label') or ''}　·　"
+                    f"{_chip(who)}"
+                    f"<span style='color:{theme.FAINT}'>{hit.get('ts_label') or ''}　·　"
                     f"相似度 {float(hit.get('score', 0)):.2f}</span>",
                     unsafe_allow_html=True,
                 )
                 st.markdown(f"> {hit.get('text', '')}")
-        st.divider()
 
     recent = state.role_thread(role_name)[-20:]
     if recent:
@@ -303,8 +359,8 @@ def render_archive(engine: MemoryEngine, role_name: str, snap: dict[str, Any]) -
             who = "你" if message.get("role") == "user" else "TA"
             stamp = fmt_ts(message.get("ts"))
             st.markdown(
-                f"{_chip(who, '#0EA5E9' if who == '你' else '#6366F1')}"
-                f"<span style='color:#475569'>{stamp}</span>",
+                f"{_chip(who)}"
+                f"<span style='color:{theme.FAINT}'>{stamp}</span>",
                 unsafe_allow_html=True,
             )
             st.markdown(f"> {str(message.get('content') or '')[:160]}")
@@ -322,14 +378,14 @@ def render_snapshots(snap: dict[str, Any]) -> None:
     for item in items:
         label = item.get("label") or ""
         title = item.get("episode_title") or "（未命名片段）"
-        with st.expander(f"🗂 {label} · {title}"):
+        with st.expander(f"{label} · {title}"):
             st.caption(
                 f"本次固化：新增 {item.get('facts_added', 0)} 条事实 · "
                 f"更新 {item.get('facts_updated', 0)} 条事实"
             )
             note = item.get("self_note")
             if note:
-                st.markdown(f"🪞 同时写下一条自我叙述：{note}")
+                st.markdown(f"同时写下一条自我叙述：{note}")
             st.caption("快照文件保存在 data/archive/ 下，重装软件也不会丢。")
 
 
@@ -343,15 +399,14 @@ def render_self_notes(snap: dict[str, Any]) -> None:
         return
     for item in items:
         note_type = item.get("note_type") or "成长"
-        color = {"关系": "#EC4899", "情绪": "#0EA5E9", "表达": "#A78BFA", "成长": "#F59E0B"}.get(note_type, "#64748B")
         st.markdown(
-            f"{_chip(note_type, color)}<span style='color:#0F172A'>{item.get('content', '')}</span>",
+            f"{_chip(note_type)}<span style='color:{theme.INK}'>{item.get('content', '')}</span>",
             unsafe_allow_html=True,
         )
         st.caption(f"首次 {item.get('created_label', '')} · 被说起 {item.get('mention_count', 1)} 次")
 
 
-@st.dialog("✏️ 纠正这条记忆")
+@st.dialog("纠正这条记忆")
 def correct_dialog(role_name: str, fact: dict[str, Any]) -> None:
     """用户亲手改一条事实（记忆可纠正）。"""
     st.caption("改完会新增一条高置信事实，旧的那条标成「已被取代」留在审计记录里——它以前记错过什么，看得见。")
@@ -373,6 +428,47 @@ def correct_dialog(role_name: str, fact: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _second_person(text: str) -> str:
+    """面板里的人话：事实是按第三人称存的（「用户的名字是小林」），显示时换成「你」。"""
+    return (
+        str(text or "")
+        .replace("用户的", "你的")
+        .replace("用户", "你")
+        .replace("TA的", "你的")
+        .replace("ta的", "你的")
+        .replace("TA", "你")
+    )
+
+
+def _trace_text(item: Any) -> str:
+    """Trace 里显示的那句话（`memory_os` 已把它整理成人话版，这里只把人称换成第二人称）。"""
+    return _second_person(str(getattr(item, "text", "") or ""))
+
+
+def _trace_html(items: list[Any]) -> str:
+    """Trace 表：每行一条记忆——层/类型标签、内容、四个分数、为什么被选中。"""
+    rows = []
+    for item in items:
+        comp = item.components or {}
+        tier = _TIER_ALIAS.get(item.tier, item.tier)
+        pinned = _chip("必注入") if item.pinned else ""
+        kind = {"fact": "事实", "episode": "情景"}.get(str(item.kind), str(item.kind))
+        rows.append(
+            "<div class='emo-trace'>"
+            f"<div class='emo-trace-head'>{_chip(tier)}{_chip(kind)}{pinned}"
+            f"<span class='emo-trace-score'>分数 {float(item.score):.3f}</span></div>"
+            f"<p class='emo-trace-text'>{_esc(_trace_text(item)[:120])}</p>"
+            "<div class='emo-trace-parts'>"
+            f"<span>相似 {float(comp.get('sim', 0.0)):.2f}</span>"
+            f"<span>重要 {float(comp.get('importance', 0.0)):.2f}</span>"
+            f"<span>新鲜 {float(comp.get('recency', 0.0)):.2f}</span>"
+            f"<span>情绪 {float(comp.get('emotion', 0.0)):.2f}</span>"
+            f"<span class='emo-trace-why'>{_esc(item.reason or '')}</span>"
+            "</div></div>"
+        )
+    return "<div class='emo-traces'>" + "".join(rows) + "</div>"
+
+
 def render_trace(last_turn: Optional[dict[str, Any]]) -> None:
     """上一轮检索的 Trace：注入了什么、为什么、没注入什么。"""
     if not last_turn:
@@ -392,34 +488,21 @@ def render_trace(last_turn: Optional[dict[str, Any]]) -> None:
     st.caption(
         f"注入 {len(items)} 条 · 抑制 {len(skipped)} 条 · 记忆块 {len(block)} 字 / 预算 {cfg.MEMORY_BLOCK_BUDGET}"
     )
+    if not items:
+        st.caption("这一轮没有命中旧记忆——聊满 4 轮会做一次「睡眠整理」，之后这里会列出每条被选中的理由。")
     if notes:
         for note in notes:
-            st.warning(note, icon="🧠")
+            st.caption(note)
 
     if items:
-        rows = [
-            {
-                "层": _TIER_ALIAS.get(item.tier, item.tier),
-                "类型": item.kind,
-                "内容": (item.text or "")[:60],
-                "分数": round(float(item.score), 3),
-                "相似": round(float((item.components or {}).get("sim", 0.0)), 2),
-                "重要": round(float((item.components or {}).get("importance", 0.0)), 2),
-                "新鲜": round(float((item.components or {}).get("recency", 0.0)), 2),
-                "情绪": round(float((item.components or {}).get("emotion", 0.0)), 2),
-                "必注入": "是" if item.pinned else "",
-                "理由": item.reason,
-            }
-            for item in items
-        ]
-        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True, height=min(420, 42 + 35 * len(rows)))
+        st.markdown(_trace_html(items), unsafe_allow_html=True)
 
     if skipped:
         st.markdown("**本轮没有采用的记忆**")
         for item in skipped:
             st.markdown(
-                f"{_chip(_TIER_ALIAS.get(item.tier, item.tier), _TIER_COLOR.get(item.tier, '#64748B'))}"
-                f"{(item.text or '')[:60]}　·　理由：{item.reason}",
+                f"{_chip(_TIER_ALIAS.get(item.tier, item.tier))}"
+                f"<span style='color:{theme.MUTED}'>{(item.text or '')[:60]}　·　理由：{item.reason}</span>",
                 unsafe_allow_html=True,
             )
 
@@ -448,7 +531,6 @@ def render_ablation(engine: MemoryEngine, role_name: str) -> None:
         pending = int(engine.pending_turns(role_name))
     except Exception:  # 老版本引擎没有该方法时不影响主流程
         pending = 0
-    st.divider()
     st.caption(f"待固化对话：{pending} 条 turn")
     if st.button("立即固化一轮记忆", use_container_width=True, type="primary"):
         result = engine.consolidate(role_name, force=True)
