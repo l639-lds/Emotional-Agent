@@ -409,6 +409,15 @@ hr {{ border: none; border-top: 1px solid var(--surface-2); }}
 [data-testid="stChatInput"] {{ max-width: 860px; }}
 /* 教练页也收在同一条 860px 线上（st.container(key="coach") 生成的类） */
 .st-key-coach {{ max-width: 860px; }}
+/* 侧边栏运行状态胶囊：在线实心点，离线演示空心点 */
+.emo-mode {{ display: inline-flex; align-items: center; gap: 8px; margin: 2px 0 6px;
+  padding: 6px 11px; border: 1px solid var(--surface-3); border-radius: var(--radius-control);
+  background: var(--surface-1); font-size: var(--step-small); color: var(--muted); }}
+.emo-mode-dot {{ width: 7px; height: 7px; border-radius: 50%; flex: 0 0 7px;
+  background: transparent; border: 1.5px solid var(--faint); }}
+.emo-mode-online {{ color: var(--ink); border-color: var(--surface-4); }}
+.emo-mode-online .emo-mode-dot {{ background: var(--accent); border-color: var(--accent); }}
+
 .emo-propose-label {{ font-size: var(--step-small); color: var(--muted); letter-spacing: 0.01em; }}
 .emo-propose p {{ font-size: 17px; line-height: 1.7; color: var(--ink); margin: 7px 0 0; }}
 .emo-propose-why {{ display: block; font-size: var(--step-small); color: var(--faint); margin-top: 8px; }}

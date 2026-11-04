@@ -709,6 +709,13 @@ def mode_badge() -> str:
     return "离线演示模式"
 
 
+def mode_chip() -> tuple[str, str]:
+    """侧边栏状态胶囊：返回 (class, 文案)。在线用实心点，离线用空心点。"""
+    if llm.session_api_key() or llm.env_api_key():
+        return "online", mode_badge()
+    return "demo", mode_badge()
+
+
 def demo_hint() -> str:
     """演示模式下的补充说明：什么时候会切回在线、什么时候被强制挡住。"""
     if not llm.is_demo_mode():

@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import html as _html  # noqa: E402
 import time
 
 import streamlit as st
@@ -132,7 +133,12 @@ with st.sidebar:
         st.rerun()
 
     st.write("")
-    st.caption(state.mode_badge())
+    _mode_class, _mode_text = state.mode_chip()
+    st.markdown(
+        f"<div class='emo-mode emo-mode-{_mode_class}'>"
+        f"<span class='emo-mode-dot'></span>{_html.escape(_mode_text)}</div>",
+        unsafe_allow_html=True,
+    )
     _key_problem = state.api_key_problem()
     if _key_problem:
         st.caption(_key_problem)
@@ -269,8 +275,6 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 # 页头：一个视图一个头部（角色名或视图名 + 一行状态 + 右侧规模）
 # ---------------------------------------------------------------------------
-import html as _html  # noqa: E402  （只用来把动态文本放进页头的极少量 HTML 里）
-
 _stat_row = snapshot.get("stats") or {}
 _counts = (
     f"L0 原文 {int((snapshot.get('archive') or {}).get('messages', 0) or 0)} · "
