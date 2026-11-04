@@ -285,6 +285,33 @@ def test_demo_chat_protocol_has_five_fields(demo_mode):
     assert set(payload) >= {"reply", "emotion", "memory_update", "initiative", "loop_hint"}
 
 
+def test_demo_reply_avoids_repeating_previous_lines(demo_mode):
+    """连着两轮不能都甩同一句开场白 + 同一个引述句式（真人感的最低要求）。"""
+    prompt = "你是一位温柔的老父亲，喜欢用「哎」或「哈哈」开头，会称呼对方为孩子。"
+    first = demo.fake_chat(prompt, "你好，我叫小林，下周三有个面试，心里有点没底。")
+    second = demo.fake_chat(
+        prompt,
+        "我妈最近住院了，我白天上班晚上去医院，有点撑。",
+        previous=[first["reply"]],
+    )
+    assert first["reply"] != second["reply"]
+    openers = [
+        line
+        for lines in demo._REPLY_TEMPLATES["father"].values()
+        for line in lines
+    ]
+    shared = [line for line in openers if first["reply"].startswith(line) and second["reply"].startswith(line)]
+    assert not shared
+    assert first["initiative"] != second["initiative"]
+
+
+def test_demo_quote_snippet_stops_on_clause_boundary():
+    """引述用户原话时要停在完整的小句上，不能切成「下周三有」这种半截。"""
+    snippet = demo._clause_snippet("你好，我叫小林，下周三有个面试，心里有点没底。")
+    assert snippet in "你好，我叫小林，下周三有个面试，心里有点没底。"
+    assert not snippet.endswith(("有个面", "有个", "有"))
+
+
 def test_memory_block_stable_across_calls(engine):
     """同样的输入两次构建的记忆块内容一致（演示模式确定性，答辩可复现）。"""
     _feed(engine)

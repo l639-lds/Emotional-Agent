@@ -16,7 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 from core.config import (
     ALLOWED_EMOTIONS,
@@ -30,7 +30,24 @@ from core.config import (
 # ---------------------------------------------------------------------------
 
 _HAPPY_HINTS = ("开心", "高兴", "终于", "笑", "成功", "通过", "拿到", "太好了", "喜欢")
-_SAD_HINTS = ("难过", "累", "哭", "孤独", "委屈", "焦虑", "迷茫", "失败", "撑不住", "压力", "想哭")
+_SAD_HINTS = (
+    "难过",
+    "累",
+    "哭",
+    "孤独",
+    "委屈",
+    "焦虑",
+    "迷茫",
+    "失败",
+    "撑不住",
+    "压力",
+    "想哭",
+    "没底",
+    "睡不好",
+    "慌",
+    "撑",
+    "难受",
+)
 _ANGRY_HINTS = ("生气", "气死", "讨厌", "烦", "凭什么", "过分", "受不了")
 
 
@@ -69,16 +86,16 @@ def detect_style(system_prompt: str) -> str:
 
 _REPLY_TEMPLATES: dict[str, dict[str, tuple[str, ...]]] = {
     "father": {
-        "难过": ("哎，孩子，先别急着怪自己。", "爸听着呢，你慢慢说，不着急。"),
+        "难过": ("哎，孩子，先别急着怪自己。", "爸听着呢，你慢慢说，不着急。", "来，坐下，这口气先跟爸说说。"),
         "生气": ("这事儿换谁都得窝火，你先别憋在心里。", "来，跟爸说说到底是谁让你不痛快了。"),
         "开心": ("哈哈，那敢情好！说出来让爸也高兴高兴。", "看你这语气，爸就知道今天有好事。"),
-        "平静": ("嗯，爸在听。", "你说，爸一直在。"),
+        "平静": ("嗯，爸在听。", "你说，爸一直在。", "爸在呢，你说。"),
     },
     "tsundere": {
         "难过": ("……别一个人闷着，我又没说不听。", "真是的，你这样我也没办法装作没看见。"),
         "生气": ("谁惹你了？说出来，我……我跟他没完。", "哼，气成这样，先坐下，慢慢讲。"),
         "开心": ("哼，看你挺得意的嘛。", "才、才不是替你高兴呢，只是刚好我也心情好。"),
-        "平静": ("……嗯，我在。", "有话就说，别让我猜。"),
+        "平静": ("……嗯，我在。", "有话就说，别让我猜。", "……说啊，我听着呢。"),
     },
     "pirate": {
         "难过": ("喂，水手，风浪再大也不许哭丧着脸。", "把烦心事倒出来，我帮你扔进海里。"),
@@ -130,17 +147,78 @@ _FOLLOW_LINES: dict[str, tuple[str, ...]] = {
 }
 
 
-def _reply_for(system_prompt: str, user_message: str) -> str:
+_ECHO_FORMS: tuple[str, ...] = (
+    "你刚说「{text}」……",
+    "「{text}」，我记着呢。",
+    "刚才那句「{text}」，我记下了。",
+    "你说「{text}」——我听见了。",
+)
+
+
+def _clause_snippet(text: str, limit: int = 14) -> str:
+    """截到完整的小句边界上，别把一句话切成「下周三有」这种半截。"""
+    cleaned = re.sub(r"\s+", " ", (text or "").strip()).strip("。！？!?~～，,；;、 ")
+    if not cleaned:
+        return ""
+    clauses = [piece for piece in re.split(r"[，。！？；!?,;、]+", cleaned) if piece]
+    chosen = ""
+    for clause in clauses:
+        if not chosen:
+            chosen = clause
+        elif len(chosen) + 1 + len(clause) <= limit:
+            chosen = f"{chosen}，{clause}"
+        else:
+            break
+    return chosen[:limit]
+
+
+def _reply_for(
+    system_prompt: str,
+    user_message: str,
+    *,
+    previous: Sequence[str] = (),
+) -> str:
+    """生成一句演示回复。
+
+    ``previous`` 是最近几条助手回复（新的在前也行）：用来避开上一句用过的开场白
+    和引述句式——两轮都说「你说，爸一直在。」看着就很假。
+    """
     personality = detect_style(system_prompt)
     emotion = detect_emotion(user_message)
     options = _REPLY_TEMPLATES[personality][emotion]
-    opener = options[_stable_int(user_message + personality, len(options))]
+    recent = [text for text in previous if text]
+    # 只躲开最近这一句：要是躲开最近三句，轮次一多就没得选了，反而更容易撞车
+    last_text = recent[-1] if recent else ""
+
+    start = _stable_int(user_message + personality + str(len(recent)), len(options))
+    opener = options[start]
+    for step in range(len(options)):
+        candidate = options[(start + step) % len(options)]
+        if candidate not in last_text:
+            opener = candidate
+            break
 
     # 让回复与用户输入挂钩，但又别整句复读用户的原文
-    snippet = re.sub(r"\s+", " ", user_message or "").strip().rstrip("。！？~～，,")
-    echo = f"你刚说「{snippet[:12]}」……" if len(snippet) >= 10 else ""
+    snippet = _clause_snippet(user_message)
+    echo = ""
+    if len(snippet) >= 6:
+        # 句式也按轮次轮转：连着两轮都用「刚才那句「…」，我记下了」同样很假
+        pick = (len(recent) + _stable_int(snippet + opener, len(_ECHO_FORMS))) % len(_ECHO_FORMS)
+        for step in range(len(_ECHO_FORMS)):
+            form = _ECHO_FORMS[(pick + step) % len(_ECHO_FORMS)]
+            candidate = form.format(text=snippet)
+            if candidate not in last_text:
+                echo = candidate
+                break
+
     follow_lines = _FOLLOW_LINES.get(personality, _FOLLOW_LINES["generic"])
-    follow = follow_lines[_stable_int(snippet + opener, len(follow_lines))]
+    follow_start = _stable_int(snippet + opener, len(follow_lines))
+    follow = follow_lines[follow_start]
+    for step in range(len(follow_lines)):
+        candidate = follow_lines[(follow_start + step) % len(follow_lines)]
+        if candidate not in last_text:
+            follow = candidate
+            break
 
     parts = [opener, echo, follow]
     return "".join(part for part in parts if part)
@@ -588,10 +666,41 @@ def _probe_reply(system_prompt: str, question: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def fake_chat(system_prompt: str, user_message: str) -> dict[str, Any]:
-    """演示模式的主对话返回。"""
+_INITIATIVE_LINES: dict[str, tuple[str, ...]] = {
+    "father": (
+        "那你现在最想先解决哪一件？",
+        "要不要从最让你睡不着的那件说起？",
+        "爸陪你一件一件来，先说哪件？",
+    ),
+    "tsundere": (
+        "……那你现在打算怎么办？",
+        "喂，最烦的到底是哪一件，说清楚。",
+        "先说一件就好，剩下的我……我听着。",
+    ),
+    "pirate": (
+        "先挑一块最硌脚的礁石，我们从那儿开始搬。",
+        "哪件事最沉？先把它扔上甲板。",
+        "说，眼下最想先处理哪一件？",
+    ),
+    "cat": ("喵，先从哪一件开始？", "最难受的是哪一件，喵？", "先解决一件，剩下的明天再说，喵。"),
+    "generic": (
+        "那你现在最想先解决哪一件？",
+        "如果只挑一件先放下，会是哪件？",
+        "你想先聊清楚，还是先歇一会儿？",
+    ),
+}
+
+
+def fake_chat(
+    system_prompt: str,
+    user_message: str,
+    *,
+    previous: Sequence[str] = (),
+) -> dict[str, Any]:
+    """演示模式的主对话返回（``previous`` 是最近几条助手回复，用来避免复读）。"""
     emotion = detect_emotion(user_message)
-    reply = _reply_for(system_prompt, user_message)
+    reply = _reply_for(system_prompt, user_message, previous=previous)
+    personality = detect_style(system_prompt)
 
     extract = heuristic_extract_turns([{"role": "user", "content": user_message}])
     facts = extract["facts"]
@@ -600,7 +709,12 @@ def fake_chat(system_prompt: str, user_message: str) -> dict[str, Any]:
 
     initiative = None
     if "?" in user_message or "？" in user_message or emotion in NEGATIVE_EMOTIONS:
-        initiative = "那你现在最想先解决哪一件？"
+        lines = _INITIATIVE_LINES.get(personality, _INITIATIVE_LINES["generic"])
+        recent_text = "".join(text for text in previous if text)
+        picks = [line for line in lines if line not in recent_text] or list(lines)
+        # 按轮次轮转，保证连着几轮不会甩出同一句（演示模式最容易露馅的地方）
+        index = (len(previous) + _stable_int(personality, len(picks))) % len(picks)
+        initiative = picks[index]
 
     return {
         "reply": reply,

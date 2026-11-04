@@ -363,7 +363,14 @@ def structured_chat(
 
     if is_demo_mode():
         last_user = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
-        return demo.fake_chat(system_prompt=system_prompt, user_message=last_user)
+        previous = [
+            message["content"]
+            for message in messages
+            if message.get("role") == "assistant" and message.get("content")
+        ][-3:]
+        return demo.fake_chat(
+            system_prompt=system_prompt, user_message=last_user, previous=previous
+        )
 
     client = _get_client()
     system_message = {"role": "system", "content": system_prompt}
