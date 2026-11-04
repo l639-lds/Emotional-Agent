@@ -1,0 +1,256 @@
+"""跨模块集成测试：三层记忆 + 人设编译器 + 离线演示模式，端到端跑通（不联网、不导入 streamlit）。
+
+这里只断言"系统级不变量"，具体的打分公式、参数细节由 tests/test_memory_os.py 与
+tests/test_persona_forge.py 各自负责。
+"""
+
+from __future__ import annotations
+
+import time
+
+import pytest
+
+from core import config as cfg
+from core import demo, llm
+from memory_os import MemoryEngine, MemoryStore
+from persona_forge import card_to_dict, compile_persona, dict_to_card
+from persona_forge.legacy import from_legacy
+from persona_forge.render import build_system_prompt, render_style_directives
+
+ROLE = "测试角色"
+
+DIALOGUE = (
+    ("你好呀，我叫小林，下周三要去面试。", "记住啦，别慌。"),
+    ("我最讨厌别人骗我了。", "嗯，我记住了。"),
+    ("我妈最近住院了，我有点撑不住。", "抱抱你，先说给我听。"),
+    ("我还喜欢下雨天，安静。", "下雨天确实适合发呆。"),
+)
+
+
+@pytest.fixture()
+def demo_mode(monkeypatch):
+    """强制离线演示模式：所有 LLM 调用走 core.demo 的确定性假数据。"""
+    monkeypatch.setenv("EMO_DEMO_MODE", "1")
+    assert llm.is_demo_mode()
+    return "demo"
+
+
+@pytest.fixture()
+def engine(tmp_path, demo_mode):
+    store = MemoryStore(tmp_path / "memory.json")
+    return MemoryEngine(store)
+
+
+def _feed(engine: MemoryEngine, base_ms: float = 1_700_000_000_000) -> None:
+    for index, (user_text, reply) in enumerate(DIALOGUE):
+        engine.record_turn(
+            ROLE,
+            user_text,
+            reply,
+            demo.detect_emotion(user_text),
+            now=base_ms + index * 60_000,
+        )
+
+
+def test_four_turns_trigger_one_consolidation(engine):
+    """每 4 轮固化一次：第 4 轮结束后待固化清零，且留下可读的固化痕迹。"""
+    _feed(engine)
+    assert engine.pending_turns(ROLE) == 0
+    result = engine.last_consolidation
+    assert result is not None
+    assert result.notes, "固化结果必须留下 notes 给 UI 展示"
+
+    snapshot = engine.snapshot_for_ui(ROLE)
+    stats = snapshot["stats"]
+    assert stats["turns"] >= 8
+    assert stats["episodes"] >= 1
+    assert stats["facts"] >= 1
+
+
+def test_snapshot_shape_matches_ui_contract(engine):
+    """ui/panels.py 依赖的 snapshot 键与字段必须齐全。"""
+    _feed(engine)
+    snapshot = engine.snapshot_for_ui(ROLE)
+    for key in ("short", "mid", "long", "relationship", "loops", "stats", "decay_curve"):
+        assert key in snapshot
+
+    assert snapshot["short"]["count"] >= 1
+    turn = snapshot["short"]["turns"][0]
+    for field in ("role", "content", "ts_label", "emotion"):
+        assert field in turn
+    assert isinstance(turn["ts_label"], str) and turn["ts_label"]
+
+    episode = snapshot["mid"]["items"][0]
+    for field in ("id", "title", "summary", "topics", "strength", "created_label", "archived"):
+        assert field in episode
+
+    fact = snapshot["long"]["items"][0]
+    for field in ("id", "content", "category", "confidence", "last_confirmed_label", "superseded_by"):
+        assert field in fact
+
+    curve = snapshot["decay_curve"]
+    assert len(curve) == 14
+    assert {"label", "episode", "fact"} <= set(curve[0])
+    assert 0.0 <= curve[-1]["episode"] <= curve[0]["episode"] <= 1.0
+
+    relationship = snapshot["relationship"]
+    assert relationship["stage"] in {stage for _, stage in cfg.STAGE_THRESHOLDS}
+    assert 0.0 <= relationship["intimacy"] <= 100.0
+
+
+def test_memory_block_is_readable_and_budgeted(engine):
+    """记忆块喂给模型：含短期/长期、无多余空行、不超预算。"""
+    _feed(engine)
+    bundle = engine.retrieve(ROLE, "面试还是有点慌", "难过")
+    block = engine.build_memory_block(bundle)
+
+    assert "【短期" in block
+    assert "小林" in block
+    assert not block.endswith("\n")
+    assert len(block) <= cfg.MEMORY_BLOCK_BUDGET + 200
+    assert bundle.trace.items, "Trace 不能是空的，否则 UI 的『为什么记得』没东西可讲"
+
+
+def test_retrieval_respects_enabled_tiers(engine):
+    """消融开关：关掉某层，该层条目就不再进记忆块。"""
+    _feed(engine)
+
+    full = engine.retrieve(ROLE, "面试", "难过", tiers=set(cfg.ALL_TIERS))
+    short_only = engine.retrieve(ROLE, "面试", "难过", tiers={"short"})
+
+    assert full.trace.items
+    assert {item.tier for item in short_only.trace.items} <= {"short"}
+
+    nothing = engine.retrieve(ROLE, "面试", "难过", tiers=set())
+    assert nothing.trace.items == []
+    assert engine.build_memory_block(nothing) == ""
+
+
+def test_mood_gate_keeps_relevant_but_drops_offtopic_old_grief(engine):
+    """情绪门控：难受时不该翻旧账，但相关的情景记忆必须留下来（中期可见）。"""
+    _feed(engine)
+    engine.consolidate(ROLE, force=True)
+
+    bundle = engine.retrieve(ROLE, "面试还是有点慌", "难过", tiers={"short", "mid", "long"})
+    episodes = [item for item in bundle.trace.items if item.tier == "mid"]
+    assert episodes, "相关的面试 Episode 不能被情绪门控误伤，否则三层记忆只剩两层"
+
+    block = engine.build_memory_block(bundle)
+    assert "【中期" in block
+
+
+def test_proactive_openers_are_distinct(engine):
+    """主动关怀：拿到的几句开口话术不能是同一件事的换皮。"""
+    _feed(engine)
+    openers = engine.proactive_openers(ROLE, limit=3)
+    assert isinstance(openers, list)
+    if openers:
+        assert all(isinstance(text, str) and text.strip() for text in openers)
+        assert len(set(openers)) == len(openers)
+
+
+def test_auto_consolidate_switch_off(engine, monkeypatch):
+    """消融开关 auto_consolidate=False：只攒 working turns，不自动固化。"""
+    engine.config.auto_consolidate = False
+    _feed(engine)
+    assert engine.pending_turns(ROLE) >= 8
+    assert engine.last_consolidation is None
+
+    forced = engine.consolidate(ROLE, force=True)
+    assert forced is not None
+
+
+def test_time_injected_decay_and_archive(engine):
+    """时间可注入：60 天不联系，Episode 强度跌破阈值并被标记 archived（不删除）。"""
+    base = 1_700_000_000_000
+    _feed(engine, base_ms=base)
+    engine.consolidate(ROLE, force=True)
+
+    later = base + 60 * 24 * 3600 * 1000
+    engine.decay_pass(ROLE, now=later)
+    snapshot = engine.snapshot_for_ui(ROLE, now=later)
+    episodes = snapshot["mid"]["items"]
+    assert episodes
+    assert any(item["strength"] < cfg.ARCHIVE_THRESHOLD for item in episodes)
+    assert episodes[0]["archived"] is True
+    assert snapshot["stats"]["episodes"] >= 1, "归档只做标记，条目不许被删掉"
+
+
+def test_reset_role_clears_memory(engine):
+    _feed(engine)
+    engine.reset_role(ROLE)
+    snapshot = engine.snapshot_for_ui(ROLE)
+    assert snapshot["stats"]["turns"] == 0
+    assert snapshot["stats"]["facts"] == 0
+    assert snapshot["stats"]["episodes"] == 0
+
+
+def test_persona_compiles_and_drives_prompt(engine):
+    """人设编译器 → system prompt 的完整链路，且能把记忆块拼进去。"""
+    _feed(engine)
+    bundle = engine.retrieve(ROLE, "面试", "难过")
+    block = engine.build_memory_block(bundle)
+
+    compiled = compile_persona(
+        "在城中村开馄饨摊的退休刑警，嘴上骂骂咧咧心里软，一提当年案子就沉默",
+        knobs={"毒舌": 0.8, "温柔": 0.4},
+    )
+    assert compiled.card.name
+    assert compiled.card.speech.sample_lines, "台词锚点是人设可执行性的关键，不能为空"
+    assert compiled.health.score >= 60
+    assert len(compiled.critique.scores) == 6
+
+    prompt = build_system_prompt(compiled.card, block, "陌生", None)
+    assert compiled.card.name in prompt
+    assert "【短期" in prompt or "记忆" in prompt
+    assert "reply" in prompt and "emotion" in prompt
+    assert "None" not in prompt
+    assert "【台词锚点" in prompt or "台词" in prompt
+
+    directives = render_style_directives(compiled.card, {"stage": "亲近", "intimacy": 70})
+    assert isinstance(directives, list) and directives
+
+    restored = dict_to_card(card_to_dict(compiled.card))
+    assert restored.name == compiled.card.name
+    assert restored.speech.sample_lines == compiled.card.speech.sample_lines
+
+
+def test_legacy_role_still_works(engine):
+    """旧版人设（只有一个 persona 字符串）必须还能跑，不能报错、也不能出现 None。"""
+    card = from_legacy("傲娇女儿", {"persona": "嘴硬心软的傲娇女儿", "opening": "哼，你来了。", "avatar": "👧"})
+    assert card.legacy is True
+    prompt = build_system_prompt(card, "", "熟悉", None)
+    assert "傲娇" in prompt
+    assert "None" not in prompt
+    assert "reply" in prompt
+
+
+def test_demo_chat_protocol_has_five_fields(demo_mode):
+    """演示模式的对话返回要满足 UI 的五字段协议（含 initiative / loop_hint）。"""
+    payload = llm.structured_chat("你在扮演一个愿意听人说话的人。", [{"role": "user", "content": "我今天特别累"}])
+    assert payload["reply"]
+    assert payload["emotion"] in cfg.ALLOWED_EMOTIONS
+    assert set(payload) >= {"reply", "emotion", "memory_update", "initiative", "loop_hint"}
+
+
+def test_memory_block_stable_across_calls(engine):
+    """同样的输入两次构建的记忆块内容一致（演示模式确定性，答辩可复现）。"""
+    _feed(engine)
+    now = time.time() * 1000
+    first = engine.build_memory_block(engine.retrieve(ROLE, "面试", "难过", now=now))
+    second = engine.build_memory_block(engine.retrieve(ROLE, "面试", "难过", now=now))
+    assert first == second
+
+
+def test_store_persists_and_reloads(tmp_path, demo_mode):
+    """落盘后重新加载，记忆不丢（UI 每次 rerun 都会重新 load）。"""
+    path = tmp_path / "memory.json"
+    engine = MemoryEngine(MemoryStore(path))
+    _feed(engine)
+    stats_before = engine.snapshot_for_ui(ROLE)["stats"]
+
+    reloaded = MemoryEngine(MemoryStore(path))
+    stats_after = reloaded.snapshot_for_ui(ROLE)["stats"]
+    assert stats_after["facts"] == stats_before["facts"]
+    assert stats_after["episodes"] == stats_before["episodes"]
+    assert stats_after["turns"] == stats_before["turns"]

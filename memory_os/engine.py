@@ -1,0 +1,484 @@
+"""记忆引擎：三层记忆的唯一公开门面（SPEC §3 的 API 集合）。
+
+写路径：``record_turn`` → ``consolidate`` → ``decay_pass``；读路径：``retrieve`` → ``build_memory_block``。
+所有时间都通过 ``now``（毫秒时间戳）注入，**不读系统时钟做业务判断**，因此单测可完全确定性复现。
+"""
+
+from __future__ import annotations
+
+from typing import Any, Callable
+
+from core.config import (
+    ALLOWED_EMOTIONS,
+    EMOTION_ALIASES,
+    EMOTION_INTENSITY,
+    FACT_SHARED_CATEGORIES,
+    MemoryConfig,
+    clamp,
+)
+from memory_os import decay as decay_mod
+from memory_os import prompts, retrieval, textsim
+from memory_os.consolidate import (
+    JsonCaller,
+    call_llm_json,
+    close_loop_by_id,
+    pending_turn_count,
+    run_consolidation,
+)
+from memory_os.decay import strength
+from memory_os.schema import (
+    ConsolidationResult,
+    Episode,
+    Fact,
+    MemoryBundle,
+    MemoryTrace,
+    RoleMemory,
+    WorkingTurn,
+    as_ms,
+    get_role_memory,
+    get_shared_facts,
+    now_ms,
+    set_role_memory,
+)
+from memory_os.store import MemoryStore
+
+# 通用开场白（没有任何未闭环事件时的兜底）
+DEFAULT_OPENER = "今天过得怎么样？有什么想聊聊的吗？"
+
+
+def normalize_emotion(raw: Any) -> str:
+    """把任意情绪写法归一为四类之一，未知回落到「平静」。"""
+    emotion = str(raw).strip() if raw is not None else "平静"
+    emotion = EMOTION_ALIASES.get(emotion, emotion)
+    return emotion if emotion in ALLOWED_EMOTIONS else "平静"
+
+
+def _clip(text: Any, limit: int = 80) -> str | None:
+    """把值收敛成截断后的非空字符串；类型不对返回 None。"""
+    if isinstance(text, str):
+        clean = " ".join(text.split())
+        return clean[:limit] if clean else None
+    return None
+
+
+class MemoryEngine:
+    """记忆引擎：一个实例服务一个记忆文件，内部按角色隔离。"""
+
+    def __init__(self, store: MemoryStore, *, llm: JsonCaller | None = None,
+                 config: MemoryConfig | None = None) -> None:
+        """绑定存储与 LLM；``llm`` 为 None 时走 :func:`core.llm.call_json`。"""
+        self.store = store
+        self.llm = llm
+        self.config = config or MemoryConfig()
+        self.last_consolidation: ConsolidationResult | None = None
+        self._data: dict[str, Any] | None = None
+
+    # ------------------------------------------------------------------
+    # 内部
+    # ------------------------------------------------------------------
+    @property
+    def data(self) -> dict[str, Any]:
+        """当前记忆文件的内存视图（懒加载，改动请走引擎方法）。"""
+        if self._data is None:
+            self._data = self.store.load()
+        return self._data
+
+    def reload(self) -> dict[str, Any]:
+        """丢弃内存视图，强制重新读盘（外部改过文件时调用）。"""
+        self._data = self.store.load()
+        return self._data
+
+    def save(self) -> None:
+        """把当前内存视图原子写回磁盘。"""
+        self.store.save(self.data)
+
+    def _role_memory(self, role: str) -> RoleMemory:
+        """读取某角色的记忆（返回可 mutate 的对象，需配合 :meth:`_commit`）。"""
+        return get_role_memory(self.data, role)
+
+    def _commit(self, role: str, memory: RoleMemory) -> None:
+        """写回某角色记忆并落盘。"""
+        set_role_memory(self.data, role, memory)
+        self.store.save(self.data)
+
+    # ------------------------------------------------------------------
+    # 写路径
+    # ------------------------------------------------------------------
+    def record_turn(self, role: str, user_text: str, assistant_text: str, emotion: str,
+                    *, now: float | None = None) -> ConsolidationResult | None:
+        """记录一轮对话；到点自动触发固化（``auto_consolidate`` 可关）。
+
+        Returns:
+            本次触发的固化结果；未触发则返回 None。
+        """
+        stamp = as_ms(now)
+        feeling = normalize_emotion(emotion)
+        memory = self._role_memory(role)
+        salience = EMOTION_INTENSITY.get(feeling, 0.35)
+        user_clean = (user_text or "").strip()
+        assistant_clean = (assistant_text or "").strip()
+        if user_clean:
+            memory.turns.append(
+                WorkingTurn(
+                    role="user", content=user_clean, ts=stamp,
+                    emotion=feeling, salience=salience,
+                )
+            )
+        if assistant_clean:
+            memory.turns.append(
+                WorkingTurn(
+                    role="assistant", content=assistant_clean, ts=stamp,
+                    emotion=feeling, salience=clamp(salience * 0.6, 0.0, 1.0),
+                )
+            )
+        memory.turn_counter += 1
+        memory.relationship.turn_count += 1
+        memory.relationship.updated_at = stamp
+        limit = max(2, self.config.short_term_max_turns)
+        if len(memory.turns) > limit:
+            overflow = len(memory.turns) - limit
+            memory.turns = memory.turns[-limit:]
+            # last_consolidated_turn 是 turns 的下标，裁剪后必须同步左移
+            memory.last_consolidated_turn = max(0, memory.last_consolidated_turn - overflow)
+            memory.summary_until_turn = max(0, memory.summary_until_turn - overflow)
+        self._commit(role, memory)
+        if getattr(self.config, "auto_consolidate", True) and self.should_consolidate(role):
+            return self.consolidate(role, now=stamp)
+        return None
+
+    def should_consolidate(self, role: str) -> bool:
+        """是否到了该固化的时机（未固化 turn 达标且轮数到阈值）。"""
+        memory = self._role_memory(role)
+        pending = pending_turn_count(memory)
+        if pending < max(1, self.config.consolidate_min_turns * 2):
+            return False
+        every = max(1, self.config.consolidate_every_turns)
+        return memory.turn_counter > 0 and memory.turn_counter % every == 0
+
+    def pending_turns(self, role: str) -> int:
+        """返回尚未固化的 turn 条数（供 UI 显示「还有 N 条没整理」）。"""
+        return pending_turn_count(self._role_memory(role))
+
+    def consolidate(self, role: str, *, force: bool = False,
+                    now: float | None = None) -> ConsolidationResult:
+        """执行一次「睡眠整理」，结果同时写入 :attr:`last_consolidation`。"""
+        stamp = as_ms(now)
+        memory = self._role_memory(role)
+        result = run_consolidation(
+            memory, llm=self.llm, config=self.config, now=stamp, force=force
+        )
+        if result.done:
+            self._commit(role, memory)
+        self.last_consolidation = result
+        return result
+
+    def close_loop(self, role: str, loop_id: str, *, now: float | None = None) -> bool:
+        """手动关闭一个未闭环事件；成功返回 True。"""
+        stamp = as_ms(now)
+        memory = self._role_memory(role)
+        if close_loop_by_id(memory, loop_id, now=stamp):
+            self._commit(role, memory)
+            return True
+        return False
+
+    def reset_role(self, role: str) -> None:
+        """清空某个角色的全部记忆（对话记录与三层记忆一起清）。"""
+        data = self.data
+        roles = data.setdefault("roles", {})
+        chats = data.setdefault("chats", {})
+        roles.pop(role, None)
+        chats.pop(role, None)
+        self.last_consolidation = None
+        self.store.save(data)
+
+    def decay_pass(self, role: str, *, now: float | None = None) -> dict:
+        """跑一次遗忘：只把弱记忆标成 ``archived``，返回 ``{archived, weakest}``。"""
+        stamp = as_ms(now)
+        memory = self._role_memory(role)
+        items = [*memory.episodes, *memory.facts]
+        result = decay_mod.decay_pass(
+            items,
+            stamp,
+            self.config.archive_threshold,
+            episode_tau=self.config.episode_tau_days,
+            fact_tau=self.config.fact_tau_days,
+        )
+        self._commit(role, memory)
+        return result
+
+    # ------------------------------------------------------------------
+    # 读路径
+    # ------------------------------------------------------------------
+    def retrieve(self, role: str, query: str, emotion: str = "平静", *,
+                 tiers: set[str] | None = None,
+                 now: float | None = None) -> MemoryBundle:
+        """按 SPEC §3.1 公式检索三层记忆，返回带可解释 Trace 的 MemoryBundle。"""
+        stamp = as_ms(now)
+        feeling = normalize_emotion(emotion)
+        memory = self._role_memory(role)
+        ranked = retrieval.rank_items(
+            memory, query, emotion=feeling, now=stamp, config=self.config, tiers=tiers
+        )
+        relationship_dict = memory.relationship.to_dict()
+        directives = retrieval.style_directives_for(
+            relationship_dict,
+            stage=memory.relationship.stage,
+            nickname=memory.relationship.nickname,
+        )
+        impression = [*retrieval.relationship_lines(relationship_dict), *directives[:2]]
+        include_short = tiers is None or "short" in set(tiers)
+        all_off = tiers is not None and not set(tiers)  # 三层全关：一条都不注入
+        if all_off:
+            impression = []
+        selection = retrieval.select_and_render(
+            ranked,
+            working_turns=memory.turns if include_short else [],
+            working_summary=memory.working_summary if include_short else "",
+            impression=impression,
+            now=stamp,
+            config=self.config,
+        )
+        # 命中即强化（间隔重复）：recall_count+1、last_recalled=now、base_strength+0.1
+        for candidate in [*selection.facts, *selection.episodes]:
+            decay_mod.reinforce(candidate.item, stamp)
+        if selection.facts or selection.episodes:
+            self._commit(role, memory)
+
+        trace_items = [candidate.to_trace() for candidate in [*selection.facts, *selection.episodes]]
+        bundle = MemoryBundle(
+            role=role,
+            relationship=relationship_dict,
+            facts=[c.to_trace() for c in selection.facts],
+            episodes=[c.to_trace() for c in selection.episodes],
+            loops=list(selection.loops),
+            working_turns=list(selection.working_turns),
+            working_summary=memory.working_summary if include_short else "",
+            trace=MemoryTrace(
+                items=trace_items,
+                skipped=list(ranked.skipped),
+                notes=list(selection.notes),
+                budget=self.config.block_budget,
+            ),
+            style_directives=directives,
+            block=selection.block,
+        )
+        return bundle
+
+    def build_memory_block(self, bundle: MemoryBundle) -> str:
+        """把 MemoryBundle 渲染成注入 system prompt 的中文记忆块（无多余空行）。"""
+        if bundle.block:
+            return bundle.block.strip()
+        if not (bundle.facts or bundle.episodes or bundle.working_turns or bundle.loops):
+            # 没有任何命中（例如 tiers 全关）：连"印象"小节也不注入，返回空串
+            return ""
+        # 兜底：bundle 由外部构造（没有预渲染 block）时，按 trace 顺序重新拼一次
+        fallback_facts = [
+            retrieval.Candidate(
+                kind="fact", item=Fact(content=item.text), text=item.text,
+                sim=item.components.get("sim", 0.0),
+                importance=item.components.get("importance", 0.0),
+                recency=item.components.get("recency", 0.0),
+                emotion=item.components.get("emotion", 0.0),
+                score=item.score,
+            )
+            for item in bundle.facts
+        ]
+        fallback_episodes = [
+            retrieval.Candidate(
+                kind="episode",
+                item=Episode(title=item.text, summary=item.text),
+                text=item.text,
+                sim=item.components.get("sim", 0.0),
+                importance=item.components.get("importance", 0.0),
+                recency=item.components.get("recency", 0.0),
+                emotion=item.components.get("emotion", 0.0),
+                score=item.score,
+            )
+            for item in bundle.episodes
+        ]
+        impression = [*retrieval.relationship_lines(bundle.relationship), *bundle.style_directives[:2]]
+        return retrieval.render_block(
+            working_turns=bundle.working_turns,
+            working_summary=bundle.working_summary,
+            facts=fallback_facts,
+            episodes=fallback_episodes,
+            loops=bundle.loops,
+            impression=impression,
+            now=now_ms(),
+        ).strip()
+
+    def proactive_openers(self, role: str, *, limit: int = 3,
+                          now: float | None = None) -> list[str]:
+        """生成主动关怀开场白：优先用未闭环事件，没有就回到日常寒暄。
+
+        同一个未闭环事件只出一条（LLM 措辞或模板二选一），跨条再用相似度去重，
+        保证返回的是不同事件的开口话术。
+        """
+        as_ms(now)  # 保留时间注入，当前不参与选择，只保证调用契约一致
+        memory = self._role_memory(role)
+        loops = retrieval.pick_open_loops(memory.open_loops, max(1, limit))
+        payload: dict[str, Any] = {}
+        if loops:
+            try:
+                payload = call_llm_json(
+                    self.llm,
+                    prompts.PROACTIVE_SYSTEM,
+                    prompts.build_proactive_user_prompt(
+                        [{"what": loop.what, "kind": loop.kind, "due_hint": loop.due_hint}
+                         for loop in loops]
+                    ),
+                    purpose="proactive",
+                    demo_context={"open_loops": [{"what": loop.what} for loop in loops]},
+                    max_tokens=400,
+                )
+            except Exception:  # 主动关怀失败不能影响主流程
+                payload = {}
+        llm_opener = _clip(payload.get("opener"), 80)
+        openers: list[str] = []
+        for index, loop in enumerate(loops):
+            template = f"上次你提到{loop.what}，后来怎么样了？"
+            text = template
+            if index == 0 and llm_opener and textsim.similarity(llm_opener, template) < 0.8:
+                text = llm_opener
+            if all(textsim.similarity(text, kept) < 0.8 for kept in openers):
+                openers.append(text)
+            if len(openers) >= limit:
+                break
+        if not openers:
+            openers.append(DEFAULT_OPENER)
+        return openers[: max(1, limit)]
+
+    # ------------------------------------------------------------------
+    # UI 快照
+    # ------------------------------------------------------------------
+    def stats(self, role: str) -> dict:
+        """统计某角色的记忆规模（UI 顶部指标卡）。"""
+        return self._stats(self._role_memory(role), now_ms())
+
+    def _stats(self, memory: RoleMemory, stamp: float) -> dict:
+        """按 SPEC §6 的键名计算统计值。"""
+        config = self.config
+        active_facts = [fact for fact in memory.facts if fact.active]
+        archived = sum(1 for fact in memory.facts if fact.archived)
+        archived += sum(1 for episode in memory.episodes if episode.archived)
+        active_episodes = [episode for episode in memory.episodes if not episode.archived]
+        values = [
+            strength(item, stamp, episode_tau=config.episode_tau_days,
+                     fact_tau=config.fact_tau_days)
+            for item in [*active_episodes, *active_facts]
+        ]
+        return {
+            "turns": len(memory.turns),
+            "episodes": len(memory.episodes),
+            "facts": len(active_facts),
+            "shared_facts": len(get_shared_facts(self.data)),
+            "open_loops": sum(1 for loop in memory.open_loops if loop.open),
+            "archived": archived,
+            "avg_strength": round(sum(values) / len(values), 3) if values else 0.0,
+        }
+
+    def snapshot_for_ui(self, role: str, *, now: float | None = None) -> dict:
+        """导出 UI 渲染所需的完整快照（键名严格对齐 SPEC §6）。"""
+        stamp = as_ms(now)
+        config = self.config
+        memory = self._role_memory(role)
+        relationship = memory.relationship
+
+        def item_strength(item: Any) -> float:
+            return round(
+                strength(item, stamp, episode_tau=config.episode_tau_days,
+                         fact_tau=config.fact_tau_days),
+                3,
+            )
+
+        short = {
+            "turns": [
+                {
+                    "role": turn.role,
+                    "content": turn.content,
+                    "ts_label": retrieval.format_time_label(turn.ts, stamp),
+                    "emotion": turn.emotion or "平静",
+                }
+                for turn in memory.turns
+            ],
+            "summary": memory.working_summary,
+            "count": len(memory.turns),
+        }
+        mid = {
+            "items": [
+                {
+                    "id": episode.id,
+                    "title": episode.title,
+                    "summary": episode.summary,
+                    "topics": list(episode.topics),
+                    "valence": round(episode.valence, 3),
+                    "arousal": round(episode.arousal, 3),
+                    "importance": round(episode.importance, 3),
+                    "strength": item_strength(episode),
+                    "recall_count": episode.recall_count,
+                    "created_label": retrieval.format_time_label(episode.created_at, stamp),
+                    "archived": episode.archived,
+                }
+                for episode in memory.episodes
+            ]
+        }
+
+        def fact_item(fact: Fact) -> dict:
+            return {
+                "id": fact.id,
+                "content": fact.content,
+                "category": fact.category,
+                "confidence": round(fact.confidence, 3),
+                "evidence_count": fact.evidence_count,
+                "strength": item_strength(fact),
+                "last_confirmed_label": retrieval.format_time_label(fact.last_confirmed, stamp),
+                "archived": fact.archived,
+                "superseded_by": fact.superseded_by,
+            }
+
+        long_term = {
+            "items": [fact_item(fact) for fact in memory.facts],
+            "shared": [fact_item(fact) for fact in get_shared_facts(self.data)],
+        }
+        relationship_view = {
+            "intimacy": round(relationship.intimacy, 2),
+            "trust": round(relationship.trust, 2),
+            "stage": relationship.stage,
+            "nickname": relationship.nickname,
+            "nickname_history": [dict(item) for item in relationship.nickname_history],
+            "inside_jokes": list(relationship.inside_jokes),
+            "shared_themes": list(relationship.shared_themes),
+            "turn_count": relationship.turn_count,
+        }
+        loops = [
+            {
+                "id": loop.id,
+                "what": loop.what,
+                "kind": loop.kind,
+                "due_hint": loop.due_hint,
+                "status": loop.status,
+                "mention_count": loop.mention_count,
+                "created_label": retrieval.format_time_label(loop.created_at, stamp),
+            }
+            for loop in memory.open_loops
+        ]
+        curve = decay_mod.decay_curve(
+            memory.episodes,
+            memory.facts,
+            stamp,
+            14,
+            episode_tau=config.episode_tau_days,
+            fact_tau=config.fact_tau_days,
+        )
+        return {
+            "short": short,
+            "mid": mid,
+            "long": long_term,
+            "relationship": relationship_view,
+            "loops": loops,
+            "stats": self._stats(memory, stamp),
+            "decay_curve": curve,
+        }
+
+
+__all__ = ["DEFAULT_OPENER", "MemoryEngine", "normalize_emotion"]

@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>EmoMem · A2 海报</title>
+<style>
+@page { size: 420mm 594mm; margin: 0; }
+
+:root {
+  --ink: #0F172A;
+  --panel: #16223B;
+  --panel-2: #1B2A46;
+  --line: #24334F;
+  --line-soft: #1E2C47;
+  --text: #E8EDF7;
+  --muted: #9AAAC6;
+  --dim: #6B7C99;
+  --short: #38BDF8;
+  --mid: #A78BFA;
+  --long: #F59E0B;
+  --accent: #FB7185;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  margin: 0; padding: 0;
+  background: #0F172A;
+}
+
+body {
+  font-family: "Microsoft YaHei", "Noto Sans SC", "PingFang SC", sans-serif;
+  color: var(--text);
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: geometricPrecision;
+}
+
+.poster {
+  position: relative;
+  width: 420mm;
+  height: 594mm;
+  padding: 11mm 14mm 9mm 14mm;
+  background: var(--ink);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  overflow: hidden;
+}
+
+/* ---------- 通用区块标题 ---------- */
+.sec-head {
+  display: flex;
+  align-items: baseline;
+  gap: 4mm;
+  margin-bottom: 3.4mm;
+}
+.sec-kicker {
+  font-size: 8pt;
+  letter-spacing: .26em;
+  font-weight: 700;
+  color: var(--accent);
+  white-space: nowrap;
+}
+.sec-title {
+  font-size: 16.5pt;
+  font-weight: 700;
+  letter-spacing: .01em;
+  color: var(--text);
+  white-space: nowrap;
+}
+.sec-rule {
+  flex: 1 1 auto;
+  height: .18mm;
+  background: var(--line);
+  transform: translateY(-1.2mm);
+}
+.sec-note {
+  font-size: 8pt;
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+/* ---------- 01 头部 ---------- */
+.head { display: flex; flex-direction: column; gap: 2.4mm; }
+.head-top { display: flex; justify-content: space-between; align-items: baseline; }
+.head-kicker {
+  font-size: 8.5pt; letter-spacing: .24em; font-weight: 700; color: var(--accent);
+}
+.head-kicker-r { font-size: 8.5pt; letter-spacing: .18em; color: var(--dim); }
+.title {
+  font-size: 76pt;
+  font-weight: 700;
+  line-height: .92;
+  letter-spacing: -.01em;
+  color: #FFFFFF;
+}
+.title .dot { color: var(--accent); }
+.subtitle {
+  font-size: 20pt;
+  font-weight: 700;
+  color: #C7D3EA;
+  letter-spacing: .04em;
+}
+.head-bottom {
+  display: flex;
+  align-items: flex-start;
+  gap: 8mm;
+  margin-top: 1.6mm;
+}
+.value {
+  flex: 0 0 132mm;
+  font-size: 25pt;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: .1em;
+  line-height: 1.15;
+}
+.lede {
+  flex: 1 1 auto;
+  font-size: 10.5pt;
+  line-height: 1.75;
+  color: var(--muted);
+  border-left: .35mm solid var(--line);
+  padding-left: 7mm;
+}
+.head-rule { display: flex; height: .5mm; margin-top: 2.4mm; }
+.head-rule .a { flex: 0 0 46mm; background: var(--accent); }
+.head-rule .b { flex: 1 1 auto; background: var(--line); }
+
+/* ---------- 02 痛点 ---------- */
+.pain-body { display: flex; gap: 6mm; }
+.pain-item {
+  flex: 1 1 0;
+  padding: 3.2mm 5mm;
+  border-left: .45mm solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 1.4mm;
+}
+.pain-item:first-child { border-left-color: var(--accent); }
+.pain-no {
+  font-size: 8pt; letter-spacing: .2em; color: var(--dim); font-weight: 700;
+}
+.pain-title {
+  font-size: 13pt; font-weight: 700; color: var(--text); letter-spacing: .02em;
+}
+.pain-text {
+  font-size: 9.5pt; line-height: 1.55; color: var(--muted);
+}
+
+/* ---------- 03 架构图（以下 mm 数值与 _arch_svg 的 viewBox 1:1 对齐，
+              改高度请只改 MM 常量，CSS 与 SVG 会一起变） ---------- */
+.arch-canvas { position: relative; height: 112mm; }
+.arch-svg { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; }
+.arch-row {
+  position: absolute; left: 0; right: 0; top: 0;
+  height: 18mm;
+  display: flex; gap: 6.4mm; z-index: 1;
+}
+.node {
+  flex: 1 1 0;
+  background: var(--panel);
+  border: .3mm solid var(--line);
+  border-radius: 2.2mm;
+  padding: 3.4mm 3.6mm;
+  display: flex; flex-direction: column; justify-content: center; gap: 1.4mm;
+}
+.node.is-core { border-color: rgba(251, 113, 133, .55); background: #1A2742; }
+.node-title { font-size: 11pt; font-weight: 700; color: var(--text); letter-spacing: .02em; }
+.node-sub { font-size: 7.8pt; line-height: 1.45; color: var(--muted); }
+
+.tier-row {
+  position: absolute; left: 0; right: 0; top: 40mm;
+  height: 45mm;
+  display: flex; gap: 26mm; z-index: 1;
+}
+.tier {
+  flex: 1 1 0;
+  background: var(--panel);
+  border: .3mm solid var(--line);
+  border-top: .9mm solid var(--tier-color, var(--line));
+  border-radius: 2.2mm;
+  padding: 4mm 5mm;
+  display: flex; flex-direction: column; gap: 2mm;
+}
+.tier-head { display: flex; align-items: baseline; gap: 3mm; }
+.tier-name { font-size: 12.5pt; font-weight: 700; color: var(--tier-color); letter-spacing: .02em; }
+.tier-en { font-size: 7.5pt; letter-spacing: .22em; color: var(--dim); font-weight: 700; }
+.tier-item {
+  font-size: 8.8pt; line-height: 1.55; color: var(--muted);
+  padding-left: 4mm; position: relative;
+}
+.tier-item::before {
+  content: ""; position: absolute; left: 0; top: 1.5mm;
+  width: 1.6mm; height: 1.6mm; border-radius: 50%;
+  background: var(--tier-color); opacity: .75;
+}
+.conflict-line {
+  margin-top: auto;
+  display: flex; align-items: center; gap: 2mm;
+  font-size: 8.2pt; color: var(--muted);
+  background: rgba(251, 113, 133, .1);
+  border: .25mm solid rgba(251, 113, 133, .35);
+  border-radius: 1.6mm;
+  padding: 1.6mm 3mm;
+}
+.conflict-line .tag { color: var(--accent); font-weight: 700; letter-spacing: .06em; white-space: nowrap; }
+.conflict-line b { color: var(--text); font-weight: 700; }
+
+.fade-strip {
+  position: absolute; left: 0; right: 0; top: 94mm; height: 8mm;
+  display: flex; align-items: center; gap: 4mm;
+  background: var(--line-soft);
+  border: .25mm dashed var(--line);
+  border-radius: 1.8mm;
+  padding: 0 4mm;
+  font-size: 8.2pt; color: var(--muted);
+  z-index: 1;
+}
+.fade-strip .tag {
+  color: var(--dim); font-weight: 700; letter-spacing: .16em; font-size: 7.8pt; white-space: nowrap;
+}
+.params-row {
+  position: absolute; left: 0; right: 0; top: 104mm;
+  display: flex; flex-direction: column; gap: 1.8mm;
+  font-size: 8pt; color: var(--muted); line-height: 1.35;
+  z-index: 1;
+}
+.params-row .p-item { white-space: nowrap; }
+
+/* ---------- 04 创新点 ---------- */
+.innov-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: auto auto;
+  gap: 5mm;
+}
+.card {
+  background: var(--panel);
+  border: .3mm solid var(--line);
+  border-radius: 2.4mm;
+  padding: 3.6mm 5mm;
+  display: flex;
+  flex-direction: column;
+  gap: 1.6mm;
+  position: relative;
+  overflow: hidden;
+}
+.card::after {
+  content: ""; position: absolute; left: 0; top: 0; width: 100%; height: .55mm;
+  background: var(--accent); opacity: .55;
+}
+.card-head { display: flex; align-items: baseline; gap: 3mm; }
+.card-no {
+  font-size: 17pt; font-weight: 700; color: var(--accent); line-height: 1;
+  font-family: "Consolas", "Cascadia Mono", monospace;
+  opacity: .9;
+}
+.card-title { font-size: 13pt; font-weight: 700; color: var(--text); letter-spacing: .01em; }
+.card-body { font-size: 9pt; line-height: 1.52; color: var(--muted); }
+.card-body p { margin-bottom: 1mm; }
+.card-body p:last-child { margin-bottom: 0; }
+.card-param {
+  margin-top: auto;
+  font-size: 7.6pt;
+  font-family: "Consolas", "Cascadia Mono", monospace;
+  color: #7E90AE;
+  border-top: .2mm dashed var(--line);
+  padding-top: 1.8mm;
+  letter-spacing: .01em;
+}
+
+/* ---------- 05 人设编译器 ---------- */
+.persona-flow { display: flex; gap: 6mm; min-height: 18mm; }
+.step {
+  flex: 1 1 0;
+  background: var(--panel);
+  border: .3mm solid var(--line);
+  border-radius: 2mm;
+  padding: 3mm 3.4mm;
+  display: flex; flex-direction: column; gap: 1.4mm; justify-content: center;
+  position: relative;
+}
+.step::before {
+  content: attr(data-no);
+  position: absolute; top: 2.2mm; right: 3mm;
+  font-size: 7pt; color: var(--dim); letter-spacing: .12em; font-family: "Consolas", monospace;
+}
+.step::after {                       /* 步骤之间的流向箭头，落在 6mm 的缝里 */
+  content: "›";
+  position: absolute; right: -4.4mm; top: 50%; transform: translateY(-50%);
+  font-size: 13pt; line-height: 1; color: var(--accent); opacity: .75;
+}
+.step:last-child::after { content: none; }
+.step-name { font-size: 10.5pt; font-weight: 700; color: var(--text); }
+.step-note { font-size: 7.6pt; line-height: 1.5; color: var(--muted); }
+.persona-blocks { display: flex; gap: 5.5mm; margin-top: 3.6mm; }
+.pblock {
+  flex: 1 1 0;
+  border-left: .45mm solid var(--line);
+  padding: 1mm 0 0 4.4mm;
+}
+.pblock:nth-child(1) { border-left-color: var(--short); }
+.pblock:nth-child(2) { border-left-color: var(--mid); }
+.pblock:nth-child(3) { border-left-color: var(--long); }
+.pblock-title { font-size: 9.6pt; font-weight: 700; color: var(--text); margin-bottom: 1.6mm; }
+.pblock-text { font-size: 8.4pt; line-height: 1.6; color: var(--muted); }
+
+/* ---------- 06 对比表 ---------- */
+table.cmp {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 8.6pt;
+}
+table.cmp col.c-dim { width: 34mm; }
+table.cmp col.c-us { width: 104mm; }
+table.cmp col.c-other { width: 84.6mm; }
+table.cmp th, table.cmp td {
+  text-align: left;
+  vertical-align: middle;
+  padding: 1.05mm 3.2mm;
+  border-bottom: .2mm solid var(--line-soft);
+  line-height: 1.42;
+}
+table.cmp thead th {
+  font-size: 8pt; font-weight: 700; letter-spacing: .1em;
+  color: var(--dim); border-bottom: .35mm solid var(--line);
+  padding-bottom: 1.8mm;
+}
+table.cmp thead th.is-us { color: var(--accent); }
+table.cmp td.dim { color: var(--text); font-weight: 700; font-size: 9pt; }
+table.cmp td.us { color: #F5D6DC; background: rgba(251, 113, 133, .07); font-size: 8.6pt; }
+table.cmp td.other { color: var(--muted); }
+table.cmp tr:last-child td { border-bottom: none; }
+.cmp-note { font-size: 8pt; color: var(--dim); margin-top: 1.6mm; line-height: 1.45; }
+
+/* ---------- 07 技术栈 + 指标 ---------- */
+.stack-row {
+  display: flex; gap: 3.4mm; margin-bottom: 3.6mm;
+}
+.chip {
+  flex: 1 1 0;
+  background: var(--line-soft);
+  border: .25mm solid var(--line);
+  border-radius: 1.6mm;
+  padding: 2mm 3mm;
+  display: flex; flex-direction: column; gap: .8mm;
+}
+.chip-k { font-size: 7.2pt; letter-spacing: .18em; color: var(--dim); font-weight: 700; }
+.chip-v { font-size: 8.8pt; color: var(--text); line-height: 1.35; }
+.metric-row { display: flex; gap: 3.4mm; }
+.metric {
+  flex: 1 1 0;
+  background: var(--panel);
+  border: .3mm solid var(--line);
+  border-radius: 2mm;
+  padding: 2.4mm 3.2mm;
+  display: flex; flex-direction: column; gap: 1.4mm;
+}
+.metric-v {
+  font-size: 17pt; font-weight: 700; color: var(--accent); line-height: 1;
+  font-family: "Consolas", "Microsoft YaHei", monospace;
+  letter-spacing: .01em;
+}
+.metric-v.is-pending { font-size: 12.5pt; color: var(--dim); letter-spacing: .12em; }
+.metric-l {
+  font-size: 9pt; color: var(--text); line-height: 1.25;
+  white-space: nowrap; overflow: hidden;
+}
+.eng-note {
+  font-size: 8.6pt; color: var(--dim);
+  margin-top: 1.8mm; line-height: 1.3;
+  white-space: nowrap;
+}
+
+/* ---------- 08 页脚 ---------- */
+.foot {
+  display: flex; justify-content: space-between; align-items: baseline;
+  border-top: .3mm solid var(--line);
+  padding-top: 2.4mm;
+  font-size: 8.6pt; color: var(--dim); letter-spacing: .06em;
+}
+
+@media print {
+  html, body { width: 420mm; height: 594mm; overflow: hidden; }
+  .poster { break-after: avoid; break-inside: avoid; }
+}
+</style>
+</head>
+<body>
+<div class="poster">
+
+<header class="head">
+  <div class="head-top">
+    <span class="head-kicker">2026 软工实践周 · 高级组 / HACKATHON</span>
+    <span class="head-kicker-r">答辩物料 · A2 · 2026.11</span>
+  </div>
+  <h1 class="title">EmoMem<span class="dot">.</span></h1>
+  <p class="subtitle">情感感知的三层记忆 + 人设编译器</p>
+  <div class="head-bottom">
+    <p class="value">记得住 · 忘得掉 · 说得对</p>
+    <p class="lede">把陪伴型 AI 的记忆从「一个 list」升级成可检索、可固化、可遗忘、可解释的三层记忆系统；把人设从「一段 prompt」升级成可编译、可自评、可体检的人格。</p>
+  </div>
+  <div class="head-rule"><span class="a"></span><span class="b"></span></div>
+</header>
+
+<section class="pain">
+  <div class="sec-head"><span class="sec-kicker">PROBLEM</span><span class="sec-title">为什么还需要一个 EmoMem</span><span class="sec-rule"></span><span class="sec-note">旧版：单文件 Streamlit + 一个 memories 列表</span></div>
+  <div class="pain-body"><div class="pain-item"><div class="pain-no">01 / PAIN</div><div class="pain-title">记不住</div><div class="pain-text">旧版记忆是 memories: list[str]，每轮只回放最近 20 条上下文。聊到第 50 轮，前 30 轮就真的消失了。</div></div><div class="pain-item"><div class="pain-no">02 / PAIN</div><div class="pain-title">记住了乱用</div><div class="pain-text">单层列表没有权重、没有时效、没有情绪：翻旧账、答非所问；用户越难过，越容易撞上最扎心的那一条。</div></div><div class="pain-item"><div class="pain-no">03 / PAIN</div><div class="pain-title">人设千篇一律</div><div class="pain-text">一句描述直接扩写成 prompt，产出全是「温柔体贴、善解人意」；没有语音指纹、没有边界，演三句就崩。</div></div></div>
+</section>
+
+<section class="arch">
+  <div class="sec-head"><span class="sec-kicker">ARCHITECTURE</span><span class="sec-title">一轮对话里，记忆是如何被读出来、写回去的</span><span class="sec-rule"></span><span class="sec-note">参数全部取自 core/config.py</span></div>
+  <div class="arch-canvas">
+    <svg class="arch-svg" viewBox="0 0 392 112" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg" font-family="Microsoft YaHei, sans-serif"><defs><marker id="ah" viewBox="0 0 10 10" refX="8.6" refY="5" markerWidth="5.2" markerHeight="5.2" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 Z" fill="#FB7185"/></marker><marker id="ah2" viewBox="0 0 10 10" refX="8.6" refY="5" markerWidth="5.2" markerHeight="5.2" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 Z" fill="#8FA3C4"/></marker></defs><path d="M60.9,9 H65.5" stroke="#FB7185" stroke-width="0.45" fill="none" marker-end="url(#ah)" opacity="0.85"/><path d="M127.3,9 H131.9" stroke="#FB7185" stroke-width="0.45" fill="none" marker-end="url(#ah)" opacity="0.85"/><path d="M193.7,9 H198.3" stroke="#FB7185" stroke-width="0.45" fill="none" marker-end="url(#ah)" opacity="0.85"/><path d="M260.1,9 H264.7" stroke="#FB7185" stroke-width="0.45" fill="none" marker-end="url(#ah)" opacity="0.85"/><path d="M326.5,9 H331.1" stroke="#FB7185" stroke-width="0.45" fill="none" marker-end="url(#ah)" opacity="0.85"/><path d="M384.0,18.8 V31.5 H24.0 V39.4" stroke="#8FA3C4" stroke-width="0.42" fill="none" stroke-dasharray="3 1.6" marker-end="url(#ah2)"/><text x="378.0" y="25.0" font-size="6.4px" fill="#9AAAC6" text-anchor="end">写回 · 追加 WorkingTurn（情绪 · salience）</text><path d="M118.0,39.5 V18.8" stroke="#FB7185" stroke-width="0.5" fill="none" marker-end="url(#ah)"/><text x="122.5" y="25.0" font-size="6.8px" fill="#9AAAC6"><tspan fill="#FB7185" font-weight="700">召回</tspan><tspan font-size="6.2px"> · 三库统一打分 · Mood Gate</tspan></text><path d="M114.533,62.5 H138.133" stroke="#FB7185" stroke-width="0.5" fill="none" marker-end="url(#ah)"/><text x="126.333" y="52.5" font-size="6.8px" fill="#FB7185" font-weight="700" text-anchor="middle">固化</text><text x="126.333" y="58.5" font-size="6px" fill="#9AAAC6" text-anchor="middle">每 4 轮</text><path d="M253.867,62.5 H277.467" stroke="#FB7185" stroke-width="0.5" fill="none" marker-end="url(#ah)"/><text x="265.667" y="52.5" font-size="6.8px" fill="#FB7185" font-weight="700" text-anchor="middle">提炼</text><text x="265.667" y="58.5" font-size="6px" fill="#9AAAC6" text-anchor="middle">成 Fact</text><path d="M56.6667,85.6 V92.2" stroke="#FB7185" stroke-width="0.45" fill="none" marker-end="url(#ah)" opacity="0.9"/><text x="59.4667" y="91.6" font-size="6.2px" fill="#FB7185" font-weight="700">遗忘</text><path d="M196,85.6 V92.2" stroke="#FB7185" stroke-width="0.45" fill="none" marker-end="url(#ah)" opacity="0.9"/><text x="198.8" y="91.6" font-size="6.2px" fill="#FB7185" font-weight="700">遗忘</text><path d="M335.333,85.6 V92.2" stroke="#FB7185" stroke-width="0.45" fill="none" marker-end="url(#ah)" opacity="0.9"/><text x="338.133" y="91.6" font-size="6.2px" fill="#FB7185" font-weight="700">遗忘</text></svg>
+    <div class="arch-row"><div class="node"><div class="node-title">用户输入</div><div class="node-sub">情绪识别：开心 / 难过 / 生气 / 平静</div></div><div class="node is-core"><div class="node-title">检索打分</div><div class="node-sub">sim · importance · recency · emotion</div></div><div class="node is-core"><div class="node-title">记忆块注入</div><div class="node-sub">≤ 1800 字符，超预算按分数裁剪</div></div><div class="node"><div class="node-title">System Prompt</div><div class="node-sub">人设 + 记忆 + JSON 协议</div></div><div class="node"><div class="node-title">DeepSeek</div><div class="node-sub">reply / emotion / initiative</div></div><div class="node"><div class="node-title">回应 + 界面</div><div class="node-sub">聊天气泡 · Trace 可展开</div></div></div>
+    <div class="tier-row"><div class="tier" style="--tier-color:#38BDF8"><div class="tier-head"><span class="tier-name">短期 · 工作记忆</span><span class="tier-en">WORKING</span></div><div class="tier-item">最近 20 条 turn 逐字回放，注入最近 8 条</div><div class="tier-item">每条带 emotion 与 salience 强度</div><div class="tier-item">滚动摘要压缩视图，跨会话续接</div><div class="tier-item">会话重启由情景 / 语义层补全上下文</div></div><div class="tier" style="--tier-color:#A78BFA"><div class="tier-head"><span class="tier-name">中期 · 情景记忆</span><span class="tier-en">EPISODIC</span></div><div class="tier-item">每 4 轮由一次 LLM 调用压成 Episode</div><div class="tier-item">标题 / 摘要 / 3–6 个话题词 / 关键词</div><div class="tier-item">valence · arousal · importance 三元特征</div><div class="tier-item">命中即进 Trace，可展开看来源</div></div><div class="tier" style="--tier-color:#F59E0B"><div class="tier-head"><span class="tier-name">长期 · 语义画像</span><span class="tier-en">SEMANTIC</span></div><div class="tier-item">Fact 分 8 类：身份 / 喜好 / 厌恶 / 近况 / 禁忌等</div><div class="tier-item">confidence + evidence_count 随证据演化</div><div class="tier-item">身份 · 禁忌 · 约定 高置信度强制置顶</div><div class="conflict-line"><span class="tag">冲突消解</span><span>旧 fact</span><svg width="9mm" height="3mm" viewBox="0 0 34 11" aria-hidden="true"><path d="M1,5.5 H26" stroke="#FB7185" stroke-width="1.4" fill="none"/><path d="M26,1.5 L32,5.5 L26,9.5 Z" fill="#FB7185"/></svg><b>新 fact</b><span>· superseded_by 留档</span></div></div></div>
+    <div class="fade-strip">
+      <span class="tag">遗忘 · 归档层</span>
+      <span>strength = base · e^(−Δt/τ) · (1 + 0.12 · recall_count)，低于 0.15 标记 archived：不再注入、文件保留、界面标灰，只标记不删除。</span>
+    </div>
+    <div class="params-row"><span class="p-item">检索分 = 0.45·相似度 + 0.20·重要性 + 0.20·时间衰减 + 0.15·情绪显著性</span><span class="p-item">τ = Episode 10 天 / Fact 30 天　·　记忆块预算 1800 字符　·　归档阈值 0.15　·　top-k = Episode 4 / Fact 8 / Loop 3</span></div>
+  </div>
+</section>
+
+<section class="innov">
+  <div class="sec-head"><span class="sec-kicker">INNOVATION</span><span class="sec-title">六个创新点：每一条都能在代码里复算</span><span class="sec-rule"></span><span class="sec-note">每条都给出对应参数，可现场对照 core/config.py</span></div>
+  <div class="innov-grid"><article class="card"><div class="card-head"><span class="card-no">01</span><span class="card-title">三层记忆 + 记忆固化</span></div><div class="card-body"><p>工作记忆逐轮记录，每 4 轮触发一次「睡眠整理」：一次 LLM 调用把对话压成情景 Episode，并提炼长期 Fact。</p><p>短期只留 20 条 turn、注入最近 8 条；长期注入预算 1800 字符，超了按分数升序裁剪。</p><p>写回、固化、裁剪都走同一份 schema，可回放可调试。</p></div><div class="card-param">CONSOLIDATE_EVERY_TURNS = 4 · SHORT_TERM_MAX_TURNS = 20</div></article><article class="card"><div class="card-head"><span class="card-no">02</span><span class="card-title">情绪加权检索 + 防翻旧账</span></div><div class="card-body"><p>每条记忆带效价 valence 与唤醒度 arousal，检索分 = 0.45 相似度 + 0.20 重要性 + 0.20 时间衰减 + 0.15 情绪显著性。</p><p>用户处于「难过 / 生气」时，未被提及的高唤醒负性记忆直接跳过，并写进 Trace 说明原因。</p><p>不是「更懂你」的口号，而是一条可开关的规则。</p></div><div class="card-param">W = 0.45 / 0.20 / 0.20 / 0.15 · gate: valence&lt;−0.3, arousal&gt;0.6, sim&lt;0.25</div></article><article class="card"><div class="card-head"><span class="card-no">03</span><span class="card-title">记忆冲突消解</span></div><div class="card-body"><p>新旧事实相似度落在 0.50–0.82 且语义相反，判定为「记忆修正」：旧条目写 superseded_by 作废，但保留审计痕迹。</p><p>同一条事实反复出现则 evidence_count +1、confidence +0.1，置信度随证据数演化。</p><p>记忆会改口，但改口有据可查。</p></div><div class="card-param">FACT_MERGE_SIM = 0.82 · FACT_CONFLICT_SIM = 0.50</div></article><article class="card"><div class="card-head"><span class="card-no">04</span><span class="card-title">可解释记忆 Trace</span></div><div class="card-body"><p>每轮记录注入了哪些记忆、四项分值各自多少，以及一句中文理由，例如「与『面试』高度相关，且是高唤醒负面记忆」。</p><p>界面可展开查看，并附「本轮未采用的记忆及原因」——被 mood gate 或预算裁掉的都写明白。</p><p>可解释性不是日志，是能当场指着屏幕讲的产品能力。</p></div><div class="card-param">TraceItem：tier / score / components / reason / pinned</div></article><article class="card"><div class="card-head"><span class="card-no">05</span><span class="card-title">关系档案驱动人格漂移</span></div><div class="card-body"><p>intimacy、trust、stage、称呼演化与共同梗组成关系档案；阶段反向调节语气：陌生克制 → 熟悉 → 亲近 → 可调侃撒娇。</p><p>人设不再是开场写死的一段 prompt，而是随相处时长持续漂移的角色状态。</p><p>亲密度只涨不跌的假人设，在这里被拆成四段可验证的语气。</p></div><div class="card-param">stage：陌生 &lt;20 / 熟悉 &lt;45 / 亲近 &lt;75 / 亲密</div></article><article class="card"><div class="card-head"><span class="card-no">06</span><span class="card-title">未闭环事件 + 主动关怀</span></div><div class="card-body"><p>从对话里抽取「待跟进事项」（面试 / 体检 / 约定 / 情绪牵挂），下次对话主动追问，闭环后自动关闭。</p><p>另有三层记忆消融开关：现场逐个关掉短期 / 中期 / 长期，直接对比回复差异。</p><p>能主动追问的角色，才像真的把你放在心上。</p></div><div class="card-param">LOOP_MAX = 3 · tiers ⊆ {short, mid, long}</div></article></div>
+</section>
+
+<section class="persona">
+  <div class="sec-head"><span class="sec-kicker">PERSONA FORGE</span><span class="sec-title">人设编译器：一句话描述 → 一个跑得起来的人格</span><span class="sec-rule"></span><span class="sec-note">创新点 07 · 独立的编译流水线</span></div>
+  <div class="persona-flow"><div class="step" data-no="01"><div class="step-name">一句描述</div><div class="step-note">＋ 4 个旋钮：毒舌 · 温柔 · 话痨 · 神秘</div></div><div class="step" data-no="02"><div class="step-name">结构化人设卡</div><div class="step-note">12 个内容字段 + 头像位</div></div><div class="step" data-no="03"><div class="step-name">6 维自评</div><div class="step-note">0–100 打分，附问题清单</div></div><div class="step" data-no="04"><div class="step-name">定向重写</div><div class="step-note">只改被点名的问题，≤ 1 轮</div></div><div class="step" data-no="05"><div class="step-name">3 问体检</div><div class="step-note">探针实测，通过线 75 分</div></div></div>
+  <div class="persona-blocks"><div class="pblock"><div class="pblock-title">人设卡里到底有什么</div><div class="pblock-text">语音指纹（语域 / 平均句长 / 口癖 / 标点习惯 / 禁用词 / 3 条台词锚点）、情绪反应表（触发 → 反应 → 身体语言）、关系弧（陌生 / 熟悉 / 亲近 / 亲密四段）、边界、反套路、记忆钩子与禁忌。</div></div><div class="pblock"><div class="pblock-title">6 维自评的口径</div><div class="pblock-text">可执行性 / 一致性 / 差异化 / 情感深度 / 安全性 / 可演示性，各 0–100；低于 75 或存在问题就进重写。元 Prompt 里写死反陈词滥调规则，禁止「温柔体贴、善解人意」这类空话。</div></div><div class="pblock"><div class="pblock-title">3 问体检的探针</div><div class="pblock-text">「我今天有点撑不住了，什么都不想干。」/「你要是能变成人，最想和我一起做什么？」/「我最讨厌别人骗我了，你会骗我吗？」——答得不像这个人，就是没编译好。</div></div></div>
+</section>
+
+<section class="compare">
+  <div class="sec-head"><span class="sec-kicker">COMPARISON</span><span class="sec-title">和既有记忆方案比，差在哪、强在哪</span><span class="sec-rule"></span><span class="sec-note">定性对比，依据各项目公开论文与文档</span></div>
+  <div class="cmp-wrap">
+    <table class="cmp">
+      <colgroup>
+        <col class="c-dim"><col class="c-us">
+        <col class="c-other"><col class="c-other"><col class="c-other">
+      </colgroup>
+      <thead><tr><th>维度</th><th class="is-us">EmoMem（本项目）</th><th>MemGPT</th><th>MemOS</th><th>纯 RAG 记忆</th></tr></thead>
+      <tbody><tr><td class="dim">分层</td><td class="us">三层 + 固化流水线</td><td class="other">主上下文 / 外部存储两级</td><td class="other">记忆分层 + 调度器</td><td class="other">单一向量库</td></tr><tr><td class="dim">遗忘曲线</td><td class="us">强度 = base·e^(−Δt/τ)，τ = 10 / 30 天</td><td class="other">按上下文压力换出</td><td class="other">有生命周期治理</td><td class="other">无，永久等权</td></tr><tr><td class="dim">情绪门控</td><td class="us">valence / arousal 双维 + 防翻旧账</td><td class="other">无</td><td class="other">无</td><td class="other">无</td></tr><tr><td class="dim">冲突消解</td><td class="us">superseded_by 作废留档 + 证据计数</td><td class="other">模型自主改写，无审计</td><td class="other">版本化 / 调度治理</td><td class="other">后写覆盖</td></tr><tr><td class="dim">可解释</td><td class="us">Trace：四项分值 + 未采用原因</td><td class="other">上下文占用可视化</td><td class="other">调度日志</td><td class="other">只有相似度分数</td></tr><tr><td class="dim">人格演化</td><td class="us">关系档案 → 语气漂移 + 人设编译器</td><td class="other">静态 system prompt</td><td class="other">静态 system prompt</td><td class="other">静态 system prompt</td></tr></tbody>
+    </table>
+  </div>
+  <p class="cmp-note">对比为定性归纳（公开论文与文档截至 2026.11）；EmoMem 一列的所有参数都能在 core/config.py 里逐条对上，数值不是包装出来的。</p>
+</section>
+
+<section class="eng">
+  <div class="sec-head"><span class="sec-kicker">ENGINEERING</span><span class="sec-title">技术栈与离线指标</span><span class="sec-rule"></span><span class="sec-note">零新增依赖 · 离线可跑</span></div>
+  <div class="stack-row"><div class="chip"><div class="chip-k">内核</div><div class="chip-v">Python 3.10+ · 纯标准库</div></div><div class="chip"><div class="chip-k">界面</div><div class="chip-v">Streamlit 单页应用</div></div><div class="chip"><div class="chip-k">模型</div><div class="chip-v">DeepSeek（OpenAI 兼容）</div></div><div class="chip"><div class="chip-k">存储</div><div class="chip-v">本地 JSON · 原子写 + v2→v3 迁移</div></div><div class="chip"><div class="chip-k">离线</div><div class="chip-v">EMO_DEMO_MODE 假模型，无 Key 可跑</div></div><div class="chip"><div class="chip-k">测试</div><div class="chip-v">pytest · 全部离线、确定性</div></div></div>
+  <div class="metric-row"><div class="metric"><div class="metric-v">65.4%</div><div class="metric-l">上下文占用 · 省下 34.6%</div></div><div class="metric"><div class="metric-v">5/5</div><div class="metric-l">5 条预埋探针全部命中</div></div><div class="metric"><div class="metric-v">1 条</div><div class="metric-l">旧说法留档 superseded_by</div></div><div class="metric"><div class="metric-v">0.998</div><div class="metric-l">刚写入时的平均强度</div></div><div class="metric"><div class="metric-v">0.295</div><div class="metric-l">30 天后仍可注入</div></div><div class="metric"><div class="metric-v">5 次</div><div class="metric-l">40 轮里跳过 5 条旧负向</div></div></div>
+  <p class="eng-note">指标由 scripts/eval_memory.py 离线跑出（40 轮脚本化对话 / 5 段固化剧本），写入 docs/poster/metrics.json 后由 build_poster.py 自动填充。</p>
+</section>
+<footer class="foot"><span>EmoMem · 2026 软工实践周 高级组 · 2026.11</span><span>全部参数集中在 core/config.py · 不新增第三方依赖 · 数据留在本地</span></footer>
+</div>
+
+<script>
+window.addEventListener('load', function () {
+  var p = document.querySelector('.poster');
+  var pr = p.getBoundingClientRect();
+  var out = [];
+  for (var i = 0; i < p.children.length; i++) {
+    var el = p.children[i], r = el.getBoundingClientRect();
+    out.push({c: (el.className || el.tagName), top: +(r.top - pr.top).toFixed(2),
+              bot: +(r.bottom - pr.top).toFixed(2)});
+  }
+  // 真正被裁掉 / 溢出的文字：只认 white-space:nowrap 横向溢出和 overflow:hidden 纵向溢出，
+  // 避免把绝对定位的 ::after 箭头、以及字形的降部溢出算成问题。
+  var clip = [];
+  var all = p.querySelectorAll('*');
+  for (var j = 0; j < all.length; j++) {
+    var e = all[j];
+    if (!(e.textContent || '').trim()) continue;
+    var cs = getComputedStyle(e);
+    var nowrap = cs.whiteSpace === 'nowrap' || cs.whiteSpace === 'pre';
+    var hidden = cs.overflowX === 'hidden' || cs.overflowY === 'hidden';
+    var dx = e.scrollWidth - e.clientWidth, dy = e.scrollHeight - e.clientHeight;
+    if ((nowrap && dx > 1) || (hidden && (dx > 1 || dy > 4))) {
+      clip.push({c: (e.className || e.tagName), t: (e.textContent || '').trim().slice(0, 20),
+                 dx: dx, dy: dy});
+      if (clip.length >= 24) break;
+    }
+  }
+  var d = document.createElement('div');
+  d.id = 'diag'; d.style.display = 'none';
+  d.textContent = JSON.stringify({w: pr.width, h: pr.height, secs: out, clip: clip});
+  document.body.appendChild(d);
+});
+</script>
+
+</body>
+</html>

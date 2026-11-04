@@ -1,0 +1,454 @@
+"""UI 状态层：角色 / 人设卡 / 记忆引擎的装配与持久化。
+
+这一层只做数据搬运与流程编排，不渲染任何视觉组件，便于单独测试与复用。
+所有「写盘」都走原子写；所有 LLM 调用都经 :mod:`core.llm` 或组件包内部。
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import time
+from typing import Any, Optional
+
+import streamlit as st
+
+from core import config as cfg
+from core import demo, llm
+from memory_os import MemoryEngine, MemoryStore
+from persona_forge import card_to_dict, compile_persona, dict_to_card
+from persona_forge.legacy import from_legacy
+from persona_forge.schema import PersonaCard
+from persona_forge.render import build_system_prompt
+
+ROLE_FILE_VERSION = 3
+
+# 内置角色：沿用 v1 的 persona 文案，包装成 legacy 人设卡，保证老用户体验不变
+DEFAULT_ROLE_RAW: dict[str, dict[str, str]] = {
+    "温柔老父亲": {
+        "avatar": "👨",
+        "opening": "孩子，今天过得怎么样？坐下来慢慢说，爸爸听着呢。",
+        "persona": (
+            "温柔、包容、有生活智慧的老父亲，说话慢条斯理，"
+            "喜欢用“哎”或“哈哈”开头。无论用户说什么，都先接纳他的情绪，"
+            "不评判、不指责、不急着说教；关心要具体，可以称呼用户为“孩子”。"
+        ),
+    },
+    "傲娇女儿": {
+        "avatar": "👧",
+        "opening": "哼，你终于来了。有话快说，我才没有一直在等你呢。",
+        "persona": (
+            "嘴硬心软的傲娇女儿，表面上有点不耐烦、爱逞强，实际上很在意用户，"
+            "会认真听用户说话。语气自然、俏皮，可以偶尔嘴硬，"
+            "但绝不能刻薄、贬低或攻击用户。"
+        ),
+    },
+}
+
+
+# ---------------------------------------------------------------------------
+# session_state
+# ---------------------------------------------------------------------------
+
+
+def init_session() -> None:
+    """初始化所有会话级默认值（幂等）。"""
+    ss = st.session_state
+    ss.setdefault("role", None)
+    ss.setdefault("flash", [])
+    ss.setdefault("retry", None)
+    ss.setdefault("last_turn", None)
+    ss.setdefault("forge_result", None)
+    for key in ("ab_mid", "ab_long", "ab_mood_gate", "ab_conflict", "ab_auto_consolidate"):
+        ss.setdefault(key, True)
+
+
+def flash(text: str) -> None:
+    """登记一条待展示的提示（同一次 rerun 内展示后清空）。"""
+    if text:
+        st.session_state["flash"].append(text)
+
+
+def take_flash() -> list[str]:
+    """取出并清空待展示提示。"""
+    items = list(st.session_state.get("flash") or [])
+    st.session_state["flash"] = []
+    return items
+
+
+# ---------------------------------------------------------------------------
+# 角色文件（v3：卡片结构化存储，兼容 v1 的 persona/opening 纯文本）
+# ---------------------------------------------------------------------------
+
+
+def _empty_role_file() -> dict[str, Any]:
+    return {"version": ROLE_FILE_VERSION, "roles": {}}
+
+
+def load_role_file() -> dict[str, Any]:
+    """读取自定义角色文件；损坏或缺失时返回空结构，绝不抛异常。"""
+    path = cfg.CUSTOM_ROLES_FILE
+    if not path.exists():
+        return _empty_role_file()
+    try:
+        raw: Any = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return _empty_role_file()
+    if not isinstance(raw, dict):
+        return _empty_role_file()
+    roles_raw = raw.get("roles", raw)
+    if not isinstance(roles_raw, dict):
+        return _empty_role_file()
+    roles = {k: v for k, v in roles_raw.items() if isinstance(k, str) and isinstance(v, dict)}
+    return {"version": ROLE_FILE_VERSION, "roles": roles}
+
+
+def save_role_file(data: dict[str, Any]) -> None:
+    """原子写入自定义角色文件。"""
+    cfg.DATA_DIR.mkdir(parents=True, exist_ok=True)
+    payload = {"version": ROLE_FILE_VERSION, "roles": data.get("roles", {})}
+    temp_file = cfg.CUSTOM_ROLES_FILE.with_suffix(".json.tmp")
+    temp_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    temp_file.replace(cfg.CUSTOM_ROLES_FILE)
+
+
+def role_names(role_file: Optional[dict[str, Any]] = None) -> list[str]:
+    """内置角色在前，自定义角色在后，保持稳定顺序。"""
+    data = role_file if role_file is not None else load_role_file()
+    custom = [name for name in data["roles"] if name not in DEFAULT_ROLE_RAW]
+    return [*DEFAULT_ROLE_RAW.keys(), *custom]
+
+
+def raw_role(name: str, role_file: Optional[dict[str, Any]] = None) -> Optional[dict[str, Any]]:
+    """取角色的原始配置（先自定义、后内置）。"""
+    data = role_file if role_file is not None else load_role_file()
+    if name in data["roles"]:
+        return data["roles"][name]
+    return DEFAULT_ROLE_RAW.get(name)
+
+
+def get_card(name: str, role_file: Optional[dict[str, Any]] = None) -> PersonaCard:
+    """取角色的人设卡：结构化卡片直接还原，v1 纯文本包装成 legacy 卡。"""
+    raw = raw_role(name, role_file) or {}
+    card_raw = raw.get("card")
+    if isinstance(card_raw, dict):
+        return dict_to_card(card_raw)
+    fallback = {"persona": f"你扮演「{name}」，用自然、有情绪温度的人话回应用户。", "opening": "……"}
+    merged = {**fallback, **{k: v for k, v in raw.items() if isinstance(v, str)}}
+    return from_legacy(name, merged)
+
+
+def opening_for(name: str, card: PersonaCard, role_file: Optional[dict[str, Any]] = None) -> str:
+    """角色的开场白：优先用文件里的 opening，其次用台词锚点。"""
+    raw = raw_role(name, role_file) or {}
+    opening = raw.get("opening")
+    if isinstance(opening, str) and opening.strip():
+        return opening.strip()
+    samples = list(getattr(getattr(card, "speech", None), "sample_lines", []) or [])
+    if samples and isinstance(samples[0], str) and samples[0].strip():
+        return samples[0].strip()
+    tagline = getattr(card, "tagline", "")
+    return tagline.strip() or "……"
+
+
+def avatar_for(name: str, card: PersonaCard, role_file: Optional[dict[str, Any]] = None) -> str:
+    """角色头像：优先文件配置，其次卡片字段。"""
+    raw = raw_role(name, role_file) or {}
+    avatar = raw.get("avatar") or getattr(card, "avatar", None)
+    return avatar.strip() if isinstance(avatar, str) and avatar.strip() else "🙂"
+
+
+def save_forged_role(
+    name: str,
+    card: PersonaCard,
+    *,
+    knobs: Optional[dict[str, float]] = None,
+    score: Optional[int] = None,
+) -> None:
+    """保存人设编译器产出的卡片。"""
+    data = load_role_file()
+    data["roles"][name] = {
+        "card": card_to_dict(card),
+        "opening": opening_for(name, card),
+        "avatar": avatar_for(name, card),
+        "meta": {
+            "source": "forge",
+            "knobs": dict(knobs or {}),
+            "score": score,
+            "created_at": time.time() * 1000.0,
+        },
+    }
+    save_role_file(data)
+
+
+def delete_role(name: str) -> bool:
+    """删除一个自定义角色（内置角色不可删）。"""
+    data = load_role_file()
+    if name not in data["roles"]:
+        return False
+    data["roles"].pop(name, None)
+    save_role_file(data)
+    return True
+
+
+# ---------------------------------------------------------------------------
+# 记忆引擎装配
+# ---------------------------------------------------------------------------
+
+
+@st.cache_resource(show_spinner=False)
+def get_store() -> MemoryStore:
+    """全进程共享一个 MemoryStore（只持有路径，读写仍走磁盘）。"""
+    return MemoryStore(cfg.MEMORY_FILE)
+
+
+def ablation_config() -> cfg.MemoryConfig:
+    """把侧边栏的消融开关翻译成 MemoryConfig。"""
+    ss = st.session_state
+    return cfg.MemoryConfig(
+        mood_gate=bool(ss.get("ab_mood_gate", True)),
+        conflict_resolution=bool(ss.get("ab_conflict", True)),
+        auto_consolidate=bool(ss.get("ab_auto_consolidate", True)),
+    )
+
+
+def enabled_tiers() -> set[str]:
+    """当前启用记忆层级（消融开关）。"""
+    tiers = {"short"}
+    if st.session_state.get("ab_mid", True):
+        tiers.add("mid")
+    if st.session_state.get("ab_long", True):
+        tiers.add("long")
+    return tiers
+
+
+def build_engine() -> MemoryEngine:
+    """按当前消融开关装配一个引擎实例（每次 rerun 重新加载，保证读到的都是最新盘上数据）。"""
+    return MemoryEngine(get_store(), config=ablation_config())
+
+
+# ---------------------------------------------------------------------------
+# 对话线程（chats 仍沿用 v2 结构，UI 按它渲染气泡）
+# ---------------------------------------------------------------------------
+
+
+def role_thread(role: str) -> list[dict[str, Any]]:
+    """读取某个角色的完整对话线程。"""
+    data = get_store().load()
+    raw = (data.get("chats") or {}).get(role)
+    if not isinstance(raw, list):
+        return []
+    return [m for m in raw if isinstance(m, dict) and isinstance(m.get("content"), str)]
+
+
+def append_chat(
+    role: str,
+    sender: str,
+    content: str,
+    *,
+    emotion: Optional[str] = None,
+    initiative: Optional[str] = None,
+    loop_hint: Optional[str] = None,
+    memory_update: Optional[str] = None,
+) -> None:
+    """追加一条消息并立即落盘。"""
+    store = get_store()
+    data = store.load()
+    chats = data.setdefault("chats", {})
+    thread = chats.setdefault(role, [])
+    item: dict[str, Any] = {"role": sender, "content": content, "ts": time.time() * 1000.0}
+    if emotion:
+        item["emotion"] = emotion
+    if initiative:
+        item["initiative"] = initiative
+    if loop_hint:
+        item["loop_hint"] = loop_hint
+    if memory_update:
+        item["memory_update"] = memory_update
+    thread.append(item)
+    store.save(data)
+
+
+def append_exchange(
+    role: str,
+    user_text: str,
+    user_emotion: Optional[str],
+    reply: str,
+    *,
+    initiative: Optional[str] = None,
+    loop_hint: Optional[str] = None,
+    memory_update: Optional[str] = None,
+) -> None:
+    """一轮问答一次性落盘（user + assistant 两条），避免两次读写互相覆盖。"""
+    store = get_store()
+    data = store.load()
+    chats = data.setdefault("chats", {})
+    thread = chats.setdefault(role, [])
+    now = time.time() * 1000.0
+    thread.append({"role": "user", "content": user_text, "ts": now, "emotion": user_emotion or "平静"})
+    assistant: dict[str, Any] = {"role": "assistant", "content": reply, "ts": now + 1.0}
+    if initiative:
+        assistant["initiative"] = initiative
+    if loop_hint:
+        assistant["loop_hint"] = loop_hint
+    if memory_update:
+        assistant["memory_update"] = memory_update
+    thread.append(assistant)
+    store.save(data)
+
+
+def ensure_opening(name: str, card: PersonaCard) -> None:
+    """空线程时补上开场白，避免界面空白。"""
+    if role_thread(name):
+        return
+    append_chat(name, "assistant", opening_for(name, card))
+
+
+def reset_role_memory(name: str) -> None:
+    """清空某个角色的全部记忆与对话。"""
+    engine = build_engine()
+    engine.reset_role(name)
+    store = get_store()
+    data = store.load()
+    chats = data.setdefault("chats", {})
+    chats[name] = []
+    store.save(data)
+
+
+def reset_everything() -> None:
+    """清空全部角色记忆与对话（保留自定义人设与全局共享事实）。"""
+    store = get_store()
+    data = store.load()
+    data["roles"] = {}
+    data["chats"] = {}
+    store.save(data)
+
+
+def forget_memory(role: str, item_id: str, *, tier: str = "long") -> bool:
+    """让 TA 忘掉一条记忆（记忆主权：可审计，也可删除）。
+
+    ``tier``：``mid`` 删一条情景 Episode，``long`` 删一条语义 Fact，
+    ``shared`` 删一条跨角色共享事实。返回是否真的删掉了。
+    """
+    store = get_store()
+    data = store.load()
+    target = str(item_id or "")
+    if not target:
+        return False
+    if tier == "shared":
+        shared = data.get("shared_facts") or []
+        kept = [item for item in shared if str(item.get("id")) != target]
+        if len(kept) == len(shared):
+            return False
+        data["shared_facts"] = kept
+        store.save(data)
+        return True
+    roles = data.get("roles") or {}
+    role_data = roles.get(role)
+    if not isinstance(role_data, dict):
+        return False
+    key = "episodes" if tier == "mid" else "facts"
+    items = role_data.get(key) or []
+    kept = [item for item in items if str(item.get("id")) != target]
+    if len(kept) == len(items):
+        return False
+    role_data[key] = kept
+    roles[role] = role_data
+    data["roles"] = roles
+    store.save(data)
+    return True
+
+
+# ---------------------------------------------------------------------------
+# 单轮对话
+# ---------------------------------------------------------------------------
+
+
+def chat_once(role_name: str, user_text: str) -> dict[str, Any]:
+    """跑完一轮：检索 → 拼 Prompt → 调模型 → 落盘 → 写回记忆。
+
+    Raises:
+        core.llm.LLMError: 模型调用失败时抛出，由 UI 层展示重试入口。
+    """
+    engine = build_engine()
+    card = get_card(role_name)
+
+    # 用户情绪先验：本地关键词判定，既服务检索门控，也用于气泡配色
+    est_emotion = demo.detect_emotion(user_text)
+    bundle = engine.retrieve(role_name, user_text, est_emotion, tiers=enabled_tiers())
+    memory_block = engine.build_memory_block(bundle)
+
+    relationship = getattr(bundle, "relationship", None)
+    intimacy = float(getattr(relationship, "intimacy", 0.0) or 0.0)
+    stage = getattr(relationship, "stage", None) or cfg.stage_of(intimacy)
+    nickname = getattr(relationship, "nickname", None)
+    system_prompt = build_system_prompt(card, memory_block, stage, nickname)
+
+    history = [
+        {"role": m["role"], "content": m["content"]}
+        for m in role_thread(role_name)[-cfg.SHORT_TERM_INJECT_TURNS:]
+        if m.get("role") in {"user", "assistant"}
+    ]
+    history.append({"role": "user", "content": user_text})
+
+    raw = llm.structured_chat(system_prompt, history)
+    reply = str(raw.get("reply") or "").strip()
+    if not reply:
+        raise llm.LLMError("模型没有返回有效回复内容")
+
+    emotion = llm.normalize_emotion(raw.get("emotion"))
+    initiative = llm.clean_memory_text(raw.get("initiative"))
+    loop_hint = llm.clean_memory_text(raw.get("loop_hint"))
+    memory_update = llm.clean_memory_text(raw.get("memory_update"))
+
+    # 先写记忆（engine 会整份 load/save），再写对话线程，否则 chats 会被记忆写入覆盖
+    engine.record_turn(role_name, user_text, reply, emotion)
+    append_exchange(
+        role_name,
+        user_text,
+        est_emotion,
+        reply,
+        initiative=initiative,
+        loop_hint=loop_hint,
+        memory_update=memory_update,
+    )
+
+    consolidation = getattr(engine, "last_consolidation", None)
+    notes = list(getattr(consolidation, "notes", []) or []) if consolidation is not None else []
+    return {
+        "reply": reply,
+        "emotion": emotion,
+        "est_emotion": est_emotion,
+        "initiative": initiative,
+        "loop_hint": loop_hint,
+        "memory_update": memory_update,
+        "bundle": bundle,
+        "memory_block": memory_block,
+        "system_prompt": system_prompt,
+        "consolidation": consolidation,
+        "notes": notes,
+    }
+
+
+def compile_and_preview(description: str, knobs: dict[str, float]) -> Any:
+    """人设编译（供 dialog 调用，异常已在编译器内部降级）。"""
+    return compile_persona(description, knobs=knobs)
+
+
+def api_key_hint() -> str:
+    """API Key / 演示模式状态文案。"""
+    if llm.is_demo_mode():
+        return "离线演示模式（本地假模型，全链路可跑）"
+    return f"已连接 DeepSeek · {cfg.DEEPSEEK_MODEL}"
+
+
+def set_api_key(value: str) -> None:
+    """会话内临时注入 API Key（只影响当前进程环境变量）。"""
+    value = value.strip()
+    if value:
+        os.environ["DEEPSEEK_API_KEY"] = value
+    else:
+        os.environ.pop("DEEPSEEK_API_KEY", None)
+    cache_clear = getattr(getattr(llm, "_client", None), "cache_clear", None)
+    if callable(cache_clear):
+        cache_clear()  # 换 key 后必须重建客户端
